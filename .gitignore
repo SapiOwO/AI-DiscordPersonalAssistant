@@ -1,0 +1,25 @@
+# Credentials
+.env
+
+# Environments
+bot-env/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Databases & Logs
+*.db
+*.log
+database_backups/
+
+# Operating System
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
