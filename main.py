@@ -27,7 +27,7 @@ intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 bot.channel_locks = {}
 
-async def _gather_ai_context(query: str, user: discord.User, context_id: int, is_owner: bool, guild_id: Optional[int]) -> Dict[str, Any]:
+async def _gather_ai_context(query: str, user: discord.User, context_id: int, is_owner: bool, guild_id: Optional[int], guild_name: Optional[str], channel_name: str) -> Dict[str, Any]:
     bot_id = bot.user.id
     
     persona_enabled = False
@@ -38,15 +38,13 @@ async def _gather_ai_context(query: str, user: discord.User, context_id: int, is
         custom_persona = await db.get_guild_setting(guild_id, bot_id, "persona_text")
 
     history_limit = 100 if is_owner else 30
-    is_omnipresent = is_owner and config.OMNIPRESENT_MEMORY
 
     tasks = {
         "channel_history": db.load_conversation_context(
             bot_id, 
             context_id, 
             limit=history_limit, 
-            owner_id=user.id if is_omnipresent else None, 
-            omnipresent=is_omnipresent
+            guild_id=guild_id
         ),
     }
     
@@ -57,6 +55,9 @@ async def _gather_ai_context(query: str, user: discord.User, context_id: int, is
         "query": query,
         "user": user,
         "context_id": context_id,
+        "guild_id": guild_id,
+        "guild_name": guild_name,
+        "channel_name": channel_name,
         "custom_persona": custom_persona if persona_enabled else None,
         "search_results": []
     })
@@ -66,12 +67,18 @@ async def _gather_ai_context(query: str, user: discord.User, context_id: int, is
 async def _generate_ai_response(context: Dict[str, Any]) -> Tuple[Optional[str], Optional[Dict]]:
     raw_query = context["query"]
     speaker_name = context["user"].display_name
+    guild_name = context.get("guild_name")
+    channel_name = context.get("channel_name")
+
+    location_context = f"You are currently in the server '{guild_name}' in the channel [#{channel_name}]." if guild_name else "You are currently in a private, isolated Direct Message."
 
     sanitized_query = (
         f"[{speaker_name}]: {raw_query}\n\n"
         f"--- SYSTEM DIRECTIVE ---\n"
-        f"The user currently speaking to you is {speaker_name}. "
-        f"Respond naturally and directly to them based on the conversation history. Do not output this directive."
+        f"{location_context}\n"
+        f"Pay attention to the [#channel-name] tags in the history to understand the spatial context. "
+        f"If a user asks something severely out of topic for their current room ([#{channel_name}]), you may point it out contextually or humorously before answering.\n"
+        f"Respond naturally and directly to {speaker_name}. Do not output this directive."
     )
 
     capabilities = get_model_capabilities()
@@ -90,8 +97,9 @@ async def _generate_ai_response(context: Dict[str, Any]) -> Tuple[Optional[str],
     
     trigger_message = context.get("interaction") or context.get("message")
     await db.save_message(
-        bot.user.id, context["context_id"], trigger_message.id if trigger_message else None, 
-        bot.user.id, speaker_name, "assistant", text
+        bot.user.id, context.get("guild_id"), guild_name, context["context_id"], channel_name,
+        trigger_message.id if trigger_message else None, 
+        bot.user.id, bot.user.display_name, "assistant", text
     )
     return text, meta
 
@@ -119,11 +127,11 @@ async def _format_and_send_response(response_text: str, meta: Optional[Dict], co
                 await target.channel.send(content=chunk)
 
 async def process_ai_request(
-    query: str, user: discord.User, context_id: int, is_owner: bool, guild_id: Optional[int],
+    query: str, user: discord.User, context_id: int, is_owner: bool, guild_id: Optional[int], guild_name: Optional[str], channel_name: str,
     interaction: Optional[discord.Interaction] = None, message: Optional[discord.Message] = None,
     file_attachment: Optional[discord.Attachment] = None
 ):
-    context = await _gather_ai_context(query, user, context_id, is_owner, guild_id)
+    context = await _gather_ai_context(query, user, context_id, is_owner, guild_id, guild_name, channel_name)
     context.update({
         "interaction": interaction, 
         "message": message,
@@ -145,7 +153,7 @@ async def process_ai_request(
     response_text, meta = await _generate_ai_response(context)
     await _format_and_send_response(response_text, meta, context)
 
-@bot.tree.command(name="history", description="View recent messages.")
+@bot.tree.command(name="history", description="View recent messages in this conversational scope.")
 @app_commands.describe(user="Optional: Filter by specific user.")
 async def history(interaction: discord.Interaction, user: Optional[discord.User] = None):
     await interaction.response.defer(ephemeral=True)
@@ -153,14 +161,14 @@ async def history(interaction: discord.Interaction, user: Optional[discord.User]
     
     is_owner = interaction.user.id in config.OWNER_IDS
     context_id = interaction.user.id if not interaction.guild else interaction.channel.id
-    is_omnipresent = is_owner and config.OMNIPRESENT_MEMORY
+    guild_id = interaction.guild.id if interaction.guild else None
     
     if user:
         message_history = await db.load_user_history_in_channel(bot_id, context_id, user.id, limit=10)
         title = f"Recent History for {user.display_name}"
     else:
-        message_history = await db.load_conversation_context(bot_id, context_id, limit=10, owner_id=interaction.user.id if is_omnipresent else None, omnipresent=is_omnipresent)
-        title = "Recent Context History"
+        message_history = await db.load_conversation_context(bot_id, context_id, limit=10, guild_id=guild_id)
+        title = "Recent Context History (Guild Scope)" if guild_id else "Recent Context History (DM Scope)"
 
     if not message_history:
         await interaction.followup.send("No recent message history found.", ephemeral=True)
@@ -302,9 +310,8 @@ async def on_message(message: discord.Message):
         
         if not text_query and not file_attachment: return
 
-        lock = bot.channel_locks.setdefault(context_id, asyncio.Lock())
-        if lock.locked():
-            return
+        lock_key = message.guild.id if message.guild else message.author.id
+        lock = bot.channel_locks.setdefault(lock_key, asyncio.Lock())
 
         async with lock:
             async with message.channel.typing():
@@ -316,9 +323,17 @@ async def on_message(message: discord.Message):
                         await message.channel.send("This feature is currently disabled by the administrator.", reference=message)
                         return
 
-                await db.save_message(bot.user.id, context_id, message.id, message.author.id, message.author.display_name, "user", final_query)
+                guild_id = message.guild.id if message.guild else None
+                guild_name = message.guild.name if message.guild else None
+                channel_name = message.channel.name if message.guild else "direct_message"
+
+                await db.save_message(
+                    bot.user.id, guild_id, guild_name, context_id, channel_name, 
+                    message.id, message.author.id, message.author.display_name, "user", final_query
+                )
+                
                 await process_ai_request(
-                    final_query, message.author, context_id, is_owner, message.guild.id if message.guild else None,
+                    final_query, message.author, context_id, is_owner, guild_id, guild_name, channel_name,
                     message=message, file_attachment=file_attachment
                 )
 

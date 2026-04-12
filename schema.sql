@@ -1,17 +1,21 @@
--- schema.sql
 CREATE DATABASE IF NOT EXISTS discord_ai CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE discord_ai;
 
-CREATE TABLE IF NOT EXISTS messages (
+DROP TABLE IF EXISTS messages;
+CREATE TABLE messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   bot_id BIGINT NOT NULL,
-  message_id BIGINT NULL,
+  guild_id BIGINT NULL,
+  guild_name VARCHAR(255) NULL,
   channel_id BIGINT NOT NULL,
+  channel_name VARCHAR(255) NULL,
+  message_id BIGINT NULL,
   author_id BIGINT NULL,
   username VARCHAR(255) NULL,
   role ENUM('system','user','assistant') NOT NULL,
   content LONGTEXT,
   created_at DATETIME NOT NULL,
+  INDEX idx_messages_guild (bot_id, guild_id, id),
   INDEX idx_messages_channel (bot_id, channel_id, id)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

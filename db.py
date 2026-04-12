@@ -11,8 +11,8 @@ logger = logging.getLogger("db")
 
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
-DB_USER = os.getenv("DB_USER", "bot_user")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "change_me")
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "discord_ai")
 
 db_pool: Optional[aiomysql.Pool] = None
@@ -74,36 +74,52 @@ async def update_profile_imagine_timestamp(user_id: int, bot_id: int):
         async with conn.cursor() as cur:
             await cur.execute("UPDATE profiles SET last_imagine_timestamp=%s WHERE user_id=%s AND bot_id=%s", (now, user_id, bot_id))
 
-async def save_message(bot_id: int, channel_id: int, message_id: Optional[int], author_id: Optional[int], username: Optional[str], role: str, content: str):
+async def save_message(bot_id: int, guild_id: Optional[int], guild_name: Optional[str], channel_id: int, channel_name: Optional[str], message_id: Optional[int], author_id: Optional[int], username: Optional[str], role: str, content: str):
     if db_pool is None: return
     now = datetime.utcnow()
     async with db_pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "INSERT INTO messages (bot_id, channel_id, message_id, author_id, username, role, content, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (bot_id, channel_id, message_id, author_id, username, role, content, now)
+                """INSERT INTO messages 
+                (bot_id, guild_id, guild_name, channel_id, channel_name, message_id, author_id, username, role, content, created_at) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (bot_id, guild_id, guild_name, channel_id, channel_name, message_id, author_id, username, role, content, now)
             )
 
-async def load_conversation_context(bot_id: int, context_id: int, limit: int = 50, owner_id: Optional[int] = None, omnipresent: bool = False) -> List[Dict]:
+async def load_conversation_context(bot_id: int, channel_id: int, limit: int = 50, guild_id: Optional[int] = None) -> List[Dict]:
+    """
+    Jika guild_id diberikan, tarik memori se-server (Guild Scope).
+    Jika guild_id None (DM), tarik memori hanya dari channel tersebut (Isolasi).
+    """
     if db_pool is None: return []
     async with db_pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
-            if omnipresent and owner_id:
+            if guild_id:
+                # Guild Scope
                 await cur.execute("""
-                    SELECT role, content, author_id, username, created_at 
+                    SELECT role, content, author_id, username, channel_name, created_at 
                     FROM messages 
-                    WHERE bot_id=%s AND (channel_id=%s OR channel_id=%s) 
+                    WHERE bot_id=%s AND guild_id=%s 
                     ORDER BY id DESC LIMIT %s
-                """, (bot_id, context_id, owner_id, limit))
+                """, (bot_id, guild_id, limit))
             else:
+                # DM Scope / Channel Only
                 await cur.execute("""
-                    SELECT role, content, author_id, username, created_at 
+                    SELECT role, content, author_id, username, channel_name, created_at 
                     FROM messages 
                     WHERE bot_id=%s AND channel_id=%s 
                     ORDER BY id DESC LIMIT %s
-                """, (bot_id, context_id, limit))
+                """, (bot_id, channel_id, limit))
+            
             rows = await cur.fetchall()
-            return list(reversed(rows))
+            
+            formatted_rows = []
+            for row in reversed(rows):
+                if row['channel_name'] and row['channel_name'] != "direct_message" and row['role'] != "assistant":
+                    row['content'] = f"[#{row['channel_name']}] {row['content']}"
+                formatted_rows.append(row)
+                
+            return formatted_rows
 
 async def load_user_history_in_channel(bot_id: int, context_id: int, user_id: int, limit: int = 10) -> List[Dict]:
     if db_pool is None: return []
