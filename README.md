@@ -1,64 +1,67 @@
-# Discord AI Personal Assistant (Multipurpose)
+# Discord AI Personal Assistant (Sentient Multipurpose Agent)
 
-An elite, multi-purpose Discord bot powered by **Ollama** for local AI inference. This bot features sentient-like conversation, cross-server omnipresent memory, image analysis, and music integration.
+An elite, sentient-inspired Discord bot powered by **Ollama** for local AI inference. Designed for users who demand high privacy, cross-server memory synchronization, and proactive human-like interactions.
 
-## 🚀 Features
+> **Status:** 🚧 **W.I.P (Work In Progress)** - Active Development
+> **Latest Update:** April 13, 2026
 
-- **Local AI Inference**: Powered by Ollama (Gemma 4 / Llama 3).
-- **Omnipresent Memory**: Cross-server and DM memory synchronization for owners.
-- **Multimodal**: Supports Image analysis (Vision) and Audio ingestion.
-- **Sentient-like Interaction**: Dynamic typing bursts and AFK awareness.
-- **Security**: Strict whitelist-based access and automatic DB garbage collection.
-- **Full Multimedia**: Meme captioning, Stable Diffusion, and Music playback.
+## 🚀 Key Sentient Features
+
+### 🧠 Episodic Long-Term Memory (RAG)
+
+Powered by **ChromaDB**. The AI doesn't just read the current chat; it recalls past interactions from weeks or months ago using semantic vector search. It remembers your preferences, hobbies, and past specs without needing to be reminded.
+
+### 🎭 Sentient-Like Interaction
+
+- **Burst Typing Mode**: Simulates human messaging patterns by breaking long responses into rapid-fire, short messages.
+- **Presence Automation**: Automatically switches to **Idle (🌙)** status when inactive and wakes up to **Online (🟢)** or **Streaming (🟣)** when engaged.
+
+### 🕒 Proactive AFK & Room Awareness
+
+- **Dynamic AFK Pings**: AI proactively reaches out if you go silent.
+- **Room Awareness**: The AI distinguishes between a solo conversation (where it pings you directly) and a group hangout (where it makes general remarks to the room without tagging anyone).
+- **Smart Reminders**: Deterministic NLP parsing to handle "brb", "wait 10 mins", or "wake me up at 8 AM" with high precision.
+
+### 🌌 Omnipresent Logic
+
+Synchronized memory architecture for Owners. Whether you are in a private DM or a shared server, the AI maintains a consistent persona and knowledge base of who you are.
+
+---
 
 ## 🛠 Prerequisites
 
-- [Python 3.10+](https://www.python.org/)
-- [Ollama](https://ollama.com/)
-- [MySQL Server](https://www.mysql.com/)
-- [FFmpeg](https://ffmpeg.org/download.html) (For Music/Audio)
+- **Python 3.10+**
+- **Ollama** (Gemma 4 / Llama 3 recommended)
+- **MySQL Server** (Running via Laragon/XAMPP)
+- **ChromaDB** (Local Vector Storage)
+- **FFmpeg** (For Music & Audio processing)
 
-## 📦 Installation
+## 📦 Quick Installation
 
-1. **Clone the Repository**
+1. **Clone & Enter**
 
    ```sh
    git clone [https://github.com/SapiOwO/Discord-AI-Personal-Assistant.git](https://github.com/SapiOwO/Discord-AI-Personal-Assistant.git)
    cd Discord-AI-Personal-Assistant
    ```
 
-2. **Setup Virtual Environment**
+2. **Environment Setup**
 
    ```sh
    python -m venv bot-env
-   # Windows: bot-env\Scripts\activate
-   # Linux/Mac: source bot-env/bin/activate
-   ```
-
-3. **Install Dependencies**
-
-   ```sh
+   # Activate: bot-env\Scripts\activate
    pip install -r requirements.txt
    ```
 
-4. **Database Setup**
-   Import `schema.sql` to your MySQL server to initialize the required tables.
-5. **Configuration**
-   Rename `.env.example` to `.env` and fill in your `DISCORD_TOKEN`, `OWNER_IDS`, and `DB_` credentials.
+3. **Database**
+   Import `schema.sql` to MySQL. The bot will automatically handle `dynamic_settings` table creation on first run.
 
-## 🎮 Usage
+4. **Run**
 
-Run the bot: `python main.py`.
-
-### Key Commands
-
-- `/history`: View recent interaction context.
-- `/reset_channel`: Clear AI memory for the current channel.
-- `/reset_memory`: Clear personal cross-server memory.
-- `/imagine`: Generate AI art via Stable Diffusion.
+   ```sh
+   python main.py
+   ```
 
 ## 📄 License
 
-Licensed under the GNU GPLv3 License.
-
-```
+Licensed under the GNU GPLv3 License. Built with ❤️ for the AI Community.

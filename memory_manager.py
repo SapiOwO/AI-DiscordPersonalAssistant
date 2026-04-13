@@ -5,11 +5,15 @@ import chromadb
 
 logger = logging.getLogger("memory_manager")
 
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection(name="episodic_memory")
+try:
+    chroma_client = chromadb.PersistentClient(path="./chroma_db")
+    collection = chroma_client.get_or_create_collection(name="episodic_memory")
+except Exception as e:
+    logger.error(f"Failed to initialize ChromaDB: {e}")
+    collection = None
 
 def _save_memory_sync(user_id: int, username: str, role: str, content: str, message_id: str):
-    if not content or len(content) < 3:
+    if not collection or not content or len(content) < 3:
         return
         
     doc_id = f"{user_id}_{message_id}"
@@ -33,7 +37,7 @@ async def save_memory(user_id: int, username: str, role: str, content: str, mess
     await asyncio.to_thread(_save_memory_sync, user_id, username, role, content, message_id)
 
 def _search_memory_sync(user_id: int, query: str, n_results: int = 3) -> str:
-    if not query or len(query) < 3:
+    if not collection or not query or len(query) < 3:
         return ""
         
     try:
@@ -43,7 +47,7 @@ def _search_memory_sync(user_id: int, query: str, n_results: int = 3) -> str:
             where={"user_id": str(user_id)}
         )
         
-        if not results['documents'] or not results['documents'][0]:
+        if not results['documents'] or not len(results['documents'][0]):
             return ""
             
         memories = []

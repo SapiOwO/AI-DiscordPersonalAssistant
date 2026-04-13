@@ -11,6 +11,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# AI Memory & Local Vector DB (Critical)
+chroma_db/
+.cache/
+
 # Databases & Logs
 *.db
 *.log
