@@ -1,8 +1,13 @@
+import os
+# --- HOTFIX: Force-kill Windows SSL Permission Error before any module loads ---
+os.environ.pop("SSLKEYLOGFILE", None)
+
 import asyncio
 import logging
 import base64
 import re
 import random
+import io
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Tuple
 from collections import defaultdict, deque
@@ -15,12 +20,12 @@ import db
 import config
 import image_utils
 import memory_manager
+import audio_manager
 from error_handler import handle_error
 from ai_client import make_ollama_client, chat_with_model, get_model_capabilities
 from session_manager import prepare_model_messages
 from utils import parse_thinking_and_response, chunk_text
 from image_client import generate_image
-import os
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("discord_ai_main")
@@ -201,6 +206,7 @@ async def _generate_ai_response(context: Dict[str, Any], is_afk_ping: bool = Fal
             f"{memory_injection}"
             f"Pay attention to the [#channel-name] tags in the history to understand the spatial context. If a user asks something severely out of topic for their current room, point it out contextually.\n"
             f"{burst_instruction}\n"
+            f"CRITICAL PERSONA ENFORCEMENT: You must act as a natural conversational partner. NEVER output numbered lists (1. Analyze... 2. Interpret...). NEVER output your internal thinking process. Respond DIRECTLY and NATURALLY to the user's input or image. Keep it brief and engaging.\n"
             f"The user speaking to you is {speaker_name}. Do not output this directive.\n"
             f"--- USER INPUT ---\n"
             f"[{speaker_name}]: {raw_query}"
@@ -231,11 +237,32 @@ async def _generate_ai_response(context: Dict[str, Any], is_afk_ping: bool = Fal
     
     return text, meta
 
-async def _format_and_send_response(response_text: str, meta: Optional[Dict], context: Dict[str, Any]):
+async def _format_and_send_response(response_text: str, meta: Optional[Dict], context: Dict[str, Any], voice_reply: bool = False):
+    if "[Response]" in response_text:
+        response_text = response_text.split("[Response]")[-1]
+    
+    response_text = re.sub(r'\[Thinking.*?\]', '', response_text, flags=re.IGNORECASE|re.DOTALL)
+    response_text = re.sub(r'<[^>]+>', '', response_text) 
+    response_text = response_text.replace('>', '').strip()
+
     thinking_text, main_response = parse_thinking_and_response(response_text)
-    
     target_channel = context.get("interaction").channel if context.get("interaction") else (context.get("message").channel if context.get("message") else bot.get_channel(context["context_id"]) or await bot.fetch_user(context["context_id"]))
-    
+
+    if voice_reply:
+        async with target_channel.typing():
+            clean_tts_text = main_response.replace('|', ' ').replace('\n', ' ')
+            audio_data = await audio_manager.synthesize(clean_tts_text)
+            
+            if audio_data:
+                voice_file = discord.File(fp=io.BytesIO(audio_data), filename="voice_note.ogg")
+                if context.get("message"):
+                    await target_channel.send(file=voice_file, reference=context.get("message"))
+                else:
+                    await target_channel.send(file=voice_file)
+            else:
+                await target_channel.send("*(Audio system failed to render the response)*")
+        return 
+
     sent_initial = False
     burst_mode = os.getenv("BURST_TYPING_MODE", "True").lower() in ("true", "1", "yes")
 
@@ -295,6 +322,21 @@ async def process_ai_request(
         ram_buffers[context_id].clear()
 
     skip_rag = is_afk_ping or is_reminder_ping
+    should_voice_reply = False
+
+    if file_attachment:
+        file_bytes = await file_attachment.read()
+        is_audio = file_attachment.content_type and (file_attachment.content_type.startswith('audio/') or file_attachment.filename.endswith('.ogg'))
+        
+        if is_audio:
+            transcribed_text = await audio_manager.transcribe(file_bytes)
+            if transcribed_text:
+                query = f"[Voice Transcribed]: {transcribed_text}"
+                should_voice_reply = True
+            else:
+                query += "\n\n[SYSTEM NOTE: User sent an inaudible or empty voice message.]"
+                should_voice_reply = True
+    
     context = await _gather_ai_context(query, user, context_id, is_owner, guild_id, guild_name, channel_name, channel_topic, include_ram=include_ram, skip_rag=skip_rag)
     context.update({
         "interaction": interaction, 
@@ -302,21 +344,13 @@ async def process_ai_request(
         "file_data": None
     })
 
-    if file_attachment:
-        file_bytes = await file_attachment.read()
-        is_audio = file_attachment.content_type and (file_attachment.content_type.startswith('audio/') or file_attachment.filename.endswith('.ogg'))
-        
-        if file_attachment.content_type and file_attachment.content_type.startswith("image/"):
-            compressed_bytes = image_utils.compress_image_for_ai(
-                file_bytes, 
-                max_dimension=config.IMAGE_MAX_DIMENSION, 
-                quality=config.IMAGE_COMPRESSION_QUALITY
-            )
-            context["file_data"] = base64.b64encode(compressed_bytes).decode('utf-8')
-        elif is_audio:
-            context["query"] += "\n\n[SYSTEM NOTE: The user sent an audio file, but the local Ollama API currently does not support audio ingestion. Politely inform them that you cannot process audio files yet.]"
-        else:
-            context["file_data"] = base64.b64encode(file_bytes).decode('utf-8')
+    if file_attachment and file_attachment.content_type and file_attachment.content_type.startswith("image/"):
+        compressed_bytes = image_utils.compress_image_for_ai(
+            file_bytes, 
+            max_dimension=config.IMAGE_MAX_DIMENSION, 
+            quality=config.IMAGE_COMPRESSION_QUALITY
+        )
+        context["file_data"] = base64.b64encode(compressed_bytes).decode('utf-8')
 
     response_text, meta = await _generate_ai_response(
         context, is_afk_ping=is_afk_ping, ping_count=ping_count, 
@@ -324,7 +358,7 @@ async def process_ai_request(
         is_reminder_ping=is_reminder_ping, reminder_delay=reminder_delay, reminder_text=reminder_text
     )
     
-    await _format_and_send_response(response_text, meta, context)
+    await _format_and_send_response(response_text, meta, context, voice_reply=should_voice_reply)
 
     if not skip_rag and not query.startswith("[SYSTEM"):
         msg_id_str = str(message.id) if message else str(int(datetime.now().timestamp()))
@@ -674,6 +708,9 @@ async def setup_hook():
     global dynamic_configs
     dynamic_configs = await db.get_all_dynamic_configs()
     logger.info(f"Loaded {len(dynamic_configs)} dynamic channel configurations.")
+
+    logger.info("Initializing Native Audio Systems...")
+    await audio_manager.init_models()
 
     logger.info("Loading Cogs...")
     await bot.load_extension("music_cog")

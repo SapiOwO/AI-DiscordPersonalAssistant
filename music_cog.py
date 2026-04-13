@@ -128,13 +128,14 @@ class MusicState:
             self.now_playing = self.queue.pop(0)
             
             try:
-                source = discord.FFmpegPCMAudio(self.now_playing['stream_url'], executable=FFMPEG_PATH, **FFMPEG_OPTIONS)
+                # OPTIMIZATION: Using FFmpegOpusAudio instead of FFmpegPCMAudio for perfect smooth streaming
+                source = await discord.FFmpegOpusAudio.from_probe(self.now_playing['stream_url'], executable=FFMPEG_PATH, **FFMPEG_OPTIONS)
                 self.voice_client.play(source, after=lambda e: self.bot.loop.call_soon_threadsafe(self.play_next_song.set))
                 if self.last_text_channel:
                     embed = discord.Embed(title="▶️ Now Playing", description=f"[{self.now_playing['title']}]({self.now_playing['url']})", color=discord.Color.blue())
                     embed.set_footer(text=f"Requested by {self.now_playing['requester'].display_name}")
                     await self.last_text_channel.send(embed=embed)
-            except discord.errors.ClientException as e:
+            except Exception as e:
                 error_embed = discord.Embed(title="❌ Player Error", description=f"`{e}`\n\nEnsure FFmpeg is installed and configured correctly.", color=discord.Color.red())
                 if self.last_text_channel:
                     await self.last_text_channel.send(embed=error_embed)
@@ -224,6 +225,15 @@ class MusicCog(commands.Cog, name="Music"):
             
             view = SongSelectionView(entries, self, interaction)
             await interaction.followup.send(embed=embed, view=view)
+
+    @app_commands.command(name="skip", description="Skips the currently playing song.")
+    async def skip(self, interaction: discord.Interaction):
+        state = self.get_guild_state(interaction.guild_id)
+        if state.voice_client and state.voice_client.is_playing():
+            state.voice_client.stop()
+            await interaction.response.send_message("⏭️ Skipped the current song.")
+        else:
+            await interaction.response.send_message("Nothing is currently playing to skip.", ephemeral=True)
 
     @app_commands.command(name="queue", description="Shows the list of songs in the queue.")
     async def queue(self, interaction: discord.Interaction):

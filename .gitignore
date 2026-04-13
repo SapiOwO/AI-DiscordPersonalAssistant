@@ -6,24 +6,35 @@ bot-env/
 venv/
 ENV/
 
-# Python
+# Python core
 __pycache__/
 *.py[cod]
 *$py.class
+*.spec
 
-# AI Memory & Local Vector DB (Critical)
+# AI Audio Assets (Crucial: Prevents repo bloat)
+audio_models/
+temp_audio/
+
+# AI Memory & Local Vector DB
 chroma_db/
 .cache/
+huggingface/
 
 # Databases & Logs
 *.db
+*.sqlite
 *.log
+bot.log
 database_backups/
 
 # Operating System
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # IDEs
 .vscode/
 .idea/
+*.swp
+*.swo
