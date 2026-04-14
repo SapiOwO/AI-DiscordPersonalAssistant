@@ -66,3 +66,14 @@ INACTIVITY_TIMEOUT: int = get_int_env_var("INACTIVITY_TIMEOUT", 300)
 
 IMAGE_MAX_DIMENSION: int = get_int_env_var("IMAGE_MAX_DIMENSION", 1024)
 IMAGE_COMPRESSION_QUALITY: int = get_int_env_var("IMAGE_COMPRESSION_QUALITY", 85)
+
+# --- Customizable Response Templates ---
+# Override these in .env to match your persona's tone
+RESPONSE_TEMPLATES = {
+    "audio_failed": get_env_var("MSG_AUDIO_FAILED", "*(voice note couldn't be generated, sorry!)*"),
+    "memory_wiped_channel": get_env_var("MSG_MEMORY_WIPED_CHANNEL", "Memory wiped for this channel."),
+    "memory_wiped_personal": get_env_var("MSG_MEMORY_WIPED_PERSONAL", "Personal memory wiped."),
+    "error_generic": get_env_var("MSG_ERROR_GENERIC", "⚠️ Something went wrong while processing your request."),
+    "error_timeout": get_env_var("MSG_ERROR_TIMEOUT", "⚠️ The AI took too long to respond. Please try again."),
+    "error_download": get_env_var("MSG_ERROR_DOWNLOAD", "⚠️ Failed to download the attached file. Try again."),
+}
