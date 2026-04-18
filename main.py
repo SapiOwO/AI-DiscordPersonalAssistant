@@ -1,5 +1,4 @@
 import os
-# --- HOTFIX: Force-kill Windows SSL Permission Error before any module loads ---
 os.environ.pop("SSLKEYLOGFILE", None)
 
 import asyncio
@@ -25,7 +24,6 @@ from error_handler import handle_error
 from ai_client import make_ollama_client, chat_with_model, get_model_capabilities
 from session_manager import prepare_model_messages
 from utils import parse_thinking_and_response, chunk_text
-from image_client import generate_image
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("discord_ai_main")
@@ -41,8 +39,6 @@ ram_buffers = defaultdict(lambda: deque(maxlen=20))
 dynamic_configs = {}
 afk_tracker = {}
 
-# Vision cache: retains the last image per conversation scope for cross-turn recall
-# {context_id: {"b64": str, "text_prompt": str, "turn_count": int, "timestamp": datetime}}
 vision_cache = {}
 VISION_CACHE_MAX_TURNS = 5
 
@@ -52,7 +48,6 @@ current_bot_status = discord.Status.online
 def clean_text(text: str) -> str:
     return re.sub(r'[^a-z0-9\s]', '', text.lower()).strip()
 
-# --- Prompt Injection Sanitization for Retrieved Memories ---
 _INJECTION_PATTERNS = [
     r'ignore (?:all )?previous (?:instructions|prompts|directives)',
     r'(?:output|reveal|show|print|display) (?:your |the )?system prompt',
@@ -66,7 +61,6 @@ _INJECTION_PATTERNS = [
 _INJECTION_RE = re.compile('|'.join(_INJECTION_PATTERNS), flags=re.IGNORECASE)
 
 def sanitize_memory_text(text: str) -> str:
-    """Strip known prompt injection patterns from recalled memories."""
     return _INJECTION_RE.sub('[REDACTED]', text)
 
 def get_current_activity():
@@ -181,7 +175,6 @@ async def _generate_ai_response(context: Dict[str, Any], is_afk_ping: bool = Fal
     else:
         location_context += "You are currently in a private, isolated Direct Message."
 
-    # --- Sanitize retrieved memories against prompt injection ---
     memory_injection = ""
     if context.get("long_term_memories"):
         sanitized_memories = sanitize_memory_text(context['long_term_memories'])
@@ -333,7 +326,6 @@ async def process_ai_request(
         target_channel = message.channel
 
     try:
-        # --- Phase 1: Flush RAM buffer to DB ---
         if include_ram and context_id in ram_buffers:
             ram_history = list(ram_buffers[context_id])
             if ram_history and getattr(message, 'id', None) == ram_history[-1]["message_id"]:
@@ -352,7 +344,6 @@ async def process_ai_request(
         image_b64 = None
         is_new_image = False
 
-        # --- Phase 2: Process file attachment (STT transcription / Vision encoding) ---
         if file_attachment:
             try:
                 file_bytes = await file_attachment.read()
@@ -362,7 +353,6 @@ async def process_ai_request(
                     await target_channel.send(config.RESPONSE_TEMPLATES["error_download"])
                 return
 
-            # Detect file type — use content_type first, then fall back to filename extension
             content_type = file_attachment.content_type or ""
             filename_lower = (file_attachment.filename or "").lower()
             image_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff')
@@ -378,7 +368,6 @@ async def process_ai_request(
             if is_audio:
                 transcribed_text = await audio_manager.transcribe(file_bytes)
                 if transcribed_text:
-                    # Preserve any accompanying text and combine with transcription
                     if query and query != "Process this.":
                         query = f"{query}\n[Voice Transcribed]: {transcribed_text}"
                     else:
@@ -397,9 +386,8 @@ async def process_ai_request(
                     )
                     image_b64 = base64.b64encode(compressed_bytes).decode('utf-8')
                     is_new_image = True
-                    logger.info(f"Image processed: {len(file_bytes)} bytes → {len(compressed_bytes)} compressed → {len(image_b64)} b64 chars")
+                    logger.info(f"Image processed: {len(file_bytes)} bytes -> {len(compressed_bytes)} compressed -> {len(image_b64)} b64 chars")
 
-                    # Cache image for cross-turn recall (so follow-up questions can "see" it)
                     vision_cache[context_id] = {
                         "b64": image_b64,
                         "text_prompt": query,
@@ -411,7 +399,6 @@ async def process_ai_request(
                     logger.error(f"Image compression/encoding failed: {e}")
                     query += "\n\n[SYSTEM NOTE: User sent an image but it could not be processed.]"
 
-        # --- Phase 3: Vision cache recall (if no new image is attached) ---
         vision_recall_note = ""
         if not image_b64 and context_id in vision_cache:
             cached = vision_cache[context_id]
@@ -427,8 +414,6 @@ async def process_ai_request(
                 del vision_cache[context_id]
                 logger.debug(f"Vision cache: Expired for context {context_id}")
 
-        # --- Phase 4: Save the RESOLVED user query to DB (after transcription, before vision notes) ---
-        # This is the critical fix: the DB now stores the actual transcribed text, not "Process this."
         clean_query_for_memory = query
         if message and not is_afk_ping and not is_reminder_ping:
             await db.save_message(
@@ -436,11 +421,9 @@ async def process_ai_request(
                 message.id, message.author.id, message.author.display_name, "user", query
             )
 
-        # Enrich query with vision recall context for the AI prompt only (not persisted to DB)
         if vision_recall_note:
             query += vision_recall_note
 
-        # --- Phase 5: Gather context and generate response ---
         context = await _gather_ai_context(
             query, user, context_id, is_owner, guild_id, guild_name,
             channel_name, channel_topic, include_ram=include_ram, skip_rag=skip_rag
@@ -460,12 +443,10 @@ async def process_ai_request(
         
         await _format_and_send_response(response_text, meta, context, voice_reply=should_voice_reply)
 
-        # --- Phase 6: Persist to long-term memory (ChromaDB) ---
         if not skip_rag and not clean_query_for_memory.startswith("[SYSTEM"):
             msg_id_str = str(message.id) if message else str(int(datetime.now().timestamp()))
             thinking_text, clean_response = parse_thinking_and_response(response_text)
 
-            # For new image messages, enrich memory with AI's observation for long-term textual recall
             user_memory_text = clean_query_for_memory
             if is_new_image:
                 user_memory_text = f"{clean_query_for_memory} [Image was shared. AI observed: {clean_response[:300]}]"
@@ -798,7 +779,6 @@ async def on_message(message: discord.Message):
             channel_name = message.channel.name if message.guild else "direct_message"
             channel_topic = getattr(message.channel, 'topic', None) if message.guild else None
 
-            
             await process_ai_request(
                 final_query, message.author, context_id, is_owner, guild_id, guild_name, channel_name, channel_topic,
                 message=message, file_attachment=file_attachment, include_ram=include_ram
