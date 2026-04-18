@@ -38,8 +38,9 @@ TARGET_CHANNEL_IDS: List[int] = [int(cid) for cid in get_list_env_var("TARGET_CH
 SHOW_FOOTER_INFO_DEFAULT: bool = get_bool_env_var("SHOW_FOOTER_INFO_DEFAULT", True)
 
 # --- OLLAMA MAIN BRAIN ---
-OLLAMA_HOST: Optional[str] = get_env_var("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL: str = get_env_var("OLLAMA_MODEL", "gemma4:e4b-it-q4_K_M")
+# Fallback removed. User must specify in .env or Ollama API might fail.
+OLLAMA_HOST: str = get_env_var("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL: str = get_env_var("OLLAMA_MODEL", "")
 OLLAMA_TIMEOUT: float = get_float_env_var("OLLAMA_TIMEOUT", 120.0)
 
 # --- MODEL CAPABILITIES ---
@@ -52,11 +53,23 @@ OMNIPRESENT_MEMORY: bool = get_bool_env_var("OMNIPRESENT_MEMORY", False)
 OLLAMA_TEMPERATURE: float = get_float_env_var("OLLAMA_TEMPERATURE", 0.7)
 OLLAMA_TOP_K: int = get_int_env_var("OLLAMA_TOP_K", 40)
 OLLAMA_TOP_P: float = get_float_env_var("OLLAMA_TOP_P", 0.9)
-OLLAMA_NUM_CTX: int = get_int_env_var("OLLAMA_NUM_CTX", 8192)
+OLLAMA_NUM_CTX: int = get_int_env_var("OLLAMA_NUM_CTX", 4096)
 
 # --- STATUS & ACTIVITY ---
 STATUS_MESSAGE: str = get_env_var("STATUS_MESSAGE", "your heart")
 STATUS_TYPE: str = get_env_var("STATUS_TYPE", "listening").lower()
+
+# --- PERSONA & ROLES ---
+PERSONA_ALLOWED_ROLES: List[str] = get_list_env_var("PERSONA_ALLOWED_ROLES")
+DEFAULT_PERSONA: str = get_env_var("DEFAULT_PERSONA", "You are a helpful, elite AI assistant. Keep responses concise and direct.")
+
+# --- AFK TIMER INTERVALS (Minutes) ---
+AFK_MIN_MINUTES: int = get_int_env_var("AFK_MIN_MINUTES", 15)
+AFK_MAX_MINUTES: int = get_int_env_var("AFK_MAX_MINUTES", 60)
+AFK_FOLLOWUP_MIN_MINUTES: int = get_int_env_var("AFK_FOLLOWUP_MIN_MINUTES", 20)
+AFK_FOLLOWUP_MAX_MINUTES: int = get_int_env_var("AFK_FOLLOWUP_MAX_MINUTES", 180)
+SLEEP_AFK_MIN_HOURS: int = get_int_env_var("SLEEP_AFK_MIN_HOURS", 7)
+SLEEP_AFK_MAX_HOURS: int = get_int_env_var("SLEEP_AFK_MAX_HOURS", 9)
 
 # --- EXTERNAL SERVICES ---
 IMAGINE_COOLDOWN_SECONDS: int = get_int_env_var("IMAGINE_COOLDOWN_SECONDS", 60)
