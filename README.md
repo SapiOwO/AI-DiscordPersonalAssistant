@@ -52,7 +52,7 @@ Powered by **ChromaDB**. The AI utilizes semantic vector search to recall past i
 2.  **Environment Setup**
     Create a virtual environment using Python 3.12:
     ```sh
-    python -m venv bot-env
+    py -3.12 -m venv bot-env
     # Windows:
     bot-env\Scripts\activate
     # Linux/Mac:
