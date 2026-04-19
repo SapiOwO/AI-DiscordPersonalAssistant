@@ -145,7 +145,6 @@ async def transcribe(audio_bytes: bytes) -> str:
 
 # --- SAPI's SECRET SAUCE 1: The Director (Pre-Processing) ---
 def preprocess_text_for_tts(text: str) -> str:
-    # 1. Expand Internet Abbreviations
     abbreviations = {
         r"\blol\b": "haha",
         r"\blmao\b": "oh my god",
@@ -160,39 +159,40 @@ def preprocess_text_for_tts(text: str) -> str:
     for pattern, replacement in abbreviations.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
-    # 2. Emphasize pauses on conjunctions to prevent rushing and force micro-breaths
     text = re.sub(r'\b(and|but|so|because)\b', r',\1', text, flags=re.IGNORECASE)
     
-    # 3. Clean up double commas and fix ellipsis for better pacing
     text = text.replace("...", "... ")
     text = text.replace(",,", ",")
     text = text.replace(" ,", ",")
 
     return text.strip()
 
-
-# --- SAPI's SECRET SAUCE 2: The Studio Mixer (Post-Processing) ---
 def apply_studio_mastering(audio_array: np.ndarray, sample_rate: int) -> np.ndarray:
     if Pedalboard is None:
         return audio_array
     
-    logger.info("Applying Pedalboard Studio Mastering...")
+    logger.info("Applying 200% Aggressive Punchy & Crisp Mastering...")
     board = Pedalboard([
         # 1. High-Pass Filter: Cut sub-bass rumble
-        HighpassFilter(cutoff_frequency_hz=100),
+        HighpassFilter(cutoff_frequency_hz=85),
         
-        # 2. Corrective EQ: Reduce "Boxy" frequencies
-        PeakFilter(cutoff_frequency_hz=350, gain_db=-3.0, q=2.0),
+        # 2. Extreme Body/Punch Boost: Double the low-mid weight
+        PeakFilter(cutoff_frequency_hz=200, gain_db=3.0, q=1.0),
         
-        # 3. Enhancing EQ: Add Presence and Air
-        PeakFilter(cutoff_frequency_hz=3500, gain_db=2.5, q=1.0),
-        HighShelfFilter(cutoff_frequency_hz=9000, gain_db=1.5),
+        # 3. Extreme Corrective EQ: aggressively scoop boxy/muddy frequencies
+        PeakFilter(cutoff_frequency_hz=400, gain_db=-5.0, q=1.5),
         
-        # 4. Human Dynamics Compression: Slow attack, moderate ratio
-        Compressor(threshold_db=-15, ratio=2.5, attack_ms=20, release_ms=150),
+        # 4. Hyper-Crisp Presence: Push articulation heavily
+        PeakFilter(cutoff_frequency_hz=4500, gain_db=6.0, q=1.0),
         
-        # 5. Micro-Reverb: Create room illusion
-        Reverb(room_size=0.1, wet_level=0.05, dry_level=0.95)
+        # 5. Extreme Air/Sparkle: 200% boost on the high-end for 96kHz clarity
+        HighShelfFilter(cutoff_frequency_hz=10000, gain_db=8.0),
+        
+        # 6. Ultra-Punchy Compression: Heavy "In-your-face" radio compression
+        Compressor(threshold_db=-24, ratio=6.0, attack_ms=15, release_ms=80),
+        
+        # 7. Micro-Reverb: Extremely tight, almost dry to prevent tail cuts
+        Reverb(room_size=0.05, wet_level=0.02, dry_level=0.98)
     ])
     
     # Pedalboard expects shape (channels, samples)

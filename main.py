@@ -561,7 +561,7 @@ async def afk_brain_task():
 @app_commands.checks.has_permissions(administrator=True)
 async def dynamic_ai(interaction: discord.Interaction, enable_context: bool, enable_afk: bool = False, max_pings: int = 5):
     if not enable_afk and max_pings != 5:
-        await interaction.response.send_message("❌ **Configuration Error:** You cannot set `max_pings` if `enable_afk` is set to False. Please set `enable_afk` to True to use this feature.", ephemeral=True)
+        await interaction.response.send_message("Configuration Error: You cannot set `max_pings` if `enable_afk` is set to False. Please set `enable_afk` to True to use this feature.", ephemeral=True)
         return
 
     channel_id = interaction.channel.id
@@ -662,6 +662,23 @@ async def reset_memory(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"Failed to wipe personal memory: {e}")
         await interaction.followup.send("Failed to clear personal memory.", ephemeral=True)
+
+@bot.tree.command(name="tts", description="Generate text-to-speech audio directly")
+@app_commands.describe(text="The text you want the bot to say")
+async def tts_command(interaction: discord.Interaction, text: str):
+    await interaction.response.defer()
+    
+    try:
+        audio_bytes = await audio_manager.synthesize(text)
+        
+        if audio_bytes:
+            voice_file = discord.File(fp=io.BytesIO(audio_bytes), filename="tts_test.ogg")
+            await interaction.followup.send(content=f'> **TTS:** {text}', file=voice_file)
+        else:
+            await interaction.followup.send("Failed to generate TTS audio.")
+    except Exception as e:
+        logger.error(f"TTS command error: {e}", exc_info=True)
+        await interaction.followup.send("An unexpected error occurred while generating TTS.")
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
