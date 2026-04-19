@@ -1,96 +1,84 @@
 import os
-import logging
-from typing import List, Optional
-
 from dotenv import load_dotenv
 
 load_dotenv()
-logger = logging.getLogger("config")
 
-def get_env_var(key: str, default: Optional[str] = None) -> Optional[str]:
-    return os.getenv(key, default)
+# --- Discord Bot Configuration ---
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+OWNER_IDS = [int(x) for x in os.getenv("OWNER_IDS", "").split(",")] if os.getenv("OWNER_IDS") else []
+TARGET_CHANNEL_IDS = [int(x) for x in os.getenv("TARGET_CHANNEL_IDS", "").split(",")] if os.getenv("TARGET_CHANNEL_IDS") else []
+ALLOW_DMS = os.getenv("ALLOW_DMS", "False").lower() in ('true', '1', 't')
 
-def get_bool_env_var(key: str, default: bool = False) -> bool:
-    value = get_env_var(key, str(default))
-    return value.lower() in ("true", "1", "yes", "y")
+# --- Database Secrets ---
+DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+DB_PORT = int(os.getenv("DB_PORT", "3306"))
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "discord_ai")
 
-def get_int_env_var(key: str, default: int) -> int:
-    try:
-        return int(get_env_var(key, str(default)))
-    except (ValueError, TypeError):
-        return default
+# --- API Keys ---
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
-def get_float_env_var(key: str, default: float) -> float:
-    try:
-        return float(get_env_var(key, str(default)))
-    except (ValueError, TypeError):
-        return default
 
-def get_list_env_var(key: str) -> List[str]:
-    value = get_env_var(key, "")
-    return [item.strip() for item in value.split(',') if item.strip()]
+# BOT CONFIGURATION (Safe to edit here)
+# --- Ollama Settings ---
+OLLAMA_HOST = "http://localhost:11434"
+OLLAMA_MODEL = "gemma4:e4b-it-q4_K_M" # Change to your downloaded model
+OLLAMA_TIMEOUT = 120
+OLLAMA_TEMPERATURE = 0.7
+OLLAMA_TOP_K = 40
+OLLAMA_TOP_P = 0.9
+OLLAMA_NUM_CTX = 8192
 
-# --- DISCORD CORE ---
-DISCORD_TOKEN: Optional[str] = get_env_var("DISCORD_TOKEN")
-OWNER_IDS: List[int] = [int(uid) for uid in get_list_env_var("OWNER_IDS")]
-ALLOW_DMS: bool = get_bool_env_var("ALLOW_DMS", False)
-TARGET_CHANNEL_IDS: List[int] = [int(cid) for cid in get_list_env_var("TARGET_CHANNEL_IDS")]
-SHOW_FOOTER_INFO_DEFAULT: bool = get_bool_env_var("SHOW_FOOTER_INFO_DEFAULT", True)
+# --- Persona & Roles ---
+DEFAULT_PERSONA = "You are an elite, sarcastic, but helpful AI assistant. Keep responses concise and direct. Use varied sentence length."
+PERSONA_ALLOWED_ROLES = ["Admin", "Moderator"]
 
-# --- OLLAMA MAIN BRAIN ---
-# Fallback removed. User must specify in .env or Ollama API might fail.
-OLLAMA_HOST: str = get_env_var("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL: str = get_env_var("OLLAMA_MODEL", "")
-OLLAMA_TIMEOUT: float = get_float_env_var("OLLAMA_TIMEOUT", 120.0)
+# --- Chat Mechanics ---
+BURST_TYPING_MODE = True
+TRIGGER_WORDS = ["bot", "ai", "system"] # Words that wake the bot up in dynamic mode
+MAX_DOCS_PER_QUERY = 8 # Number of web search results to inject
 
-# --- MODEL CAPABILITIES ---
-MODEL_SUPPORTS_VISION: bool = get_bool_env_var("MODEL_SUPPORTS_VISION", True)
-MODEL_SUPPORTS_THINKING: bool = get_bool_env_var("MODEL_SUPPORTS_THINKING", False)
-MODEL_SUPPORTS_WEBSEARCH: bool = get_bool_env_var("MODEL_SUPPORTS_WEBSEARCH", True)
-OMNIPRESENT_MEMORY: bool = get_bool_env_var("OMNIPRESENT_MEMORY", False)
+# --- Voice & Text-to-Speech (TTS) ---
+TTS_ENGINE = "kokoro" # Options: 'kokoro' or 'piper'
+TTS_VOICE = "af_heart" # Options: af_heart, af_bella, bf_emma, etc.
+FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg") # Pulls from env if custom path needed
 
-# --- INFERENCE PARAMETERS ---
-OLLAMA_TEMPERATURE: float = get_float_env_var("OLLAMA_TEMPERATURE", 0.7)
-OLLAMA_TOP_K: int = get_int_env_var("OLLAMA_TOP_K", 40)
-OLLAMA_TOP_P: float = get_float_env_var("OLLAMA_TOP_P", 0.9)
-OLLAMA_NUM_CTX: int = get_int_env_var("OLLAMA_NUM_CTX", 4096)
+# --- Status & Presence ---
+STATUS_MESSAGE = "your heart"
+STATUS_TYPE = "listening" # Options: playing, streaming, listening, watching
+SHOW_FOOTER_INFO_DEFAULT = True
 
-# --- STATUS & ACTIVITY ---
-STATUS_MESSAGE: str = get_env_var("STATUS_MESSAGE", "your heart")
-STATUS_TYPE: str = get_env_var("STATUS_TYPE", "listening").lower()
+# --- Proactive / AFK Timers (Minutes) ---
+AFK_MIN_MINUTES = 15
+AFK_MAX_MINUTES = 60
+AFK_FOLLOWUP_MIN_MINUTES = 20
+AFK_FOLLOWUP_MAX_MINUTES = 180
 
-# --- PERSONA & ROLES ---
-PERSONA_ALLOWED_ROLES: List[str] = get_list_env_var("PERSONA_ALLOWED_ROLES")
-DEFAULT_PERSONA: str = get_env_var("DEFAULT_PERSONA", "You are a helpful, elite AI assistant. Keep responses concise and direct.")
+# --- Sleep Mechanics (Hours) ---
+SLEEP_AFK_MIN_HOURS = 7
+SLEEP_AFK_MAX_HOURS = 9
 
-# --- AFK TIMER INTERVALS (Minutes) ---
-AFK_MIN_MINUTES: int = get_int_env_var("AFK_MIN_MINUTES", 15)
-AFK_MAX_MINUTES: int = get_int_env_var("AFK_MAX_MINUTES", 60)
-AFK_FOLLOWUP_MIN_MINUTES: int = get_int_env_var("AFK_FOLLOWUP_MIN_MINUTES", 20)
-AFK_FOLLOWUP_MAX_MINUTES: int = get_int_env_var("AFK_FOLLOWUP_MAX_MINUTES", 180)
-SLEEP_AFK_MIN_HOURS: int = get_int_env_var("SLEEP_AFK_MIN_HOURS", 7)
-SLEEP_AFK_MAX_HOURS: int = get_int_env_var("SLEEP_AFK_MAX_HOURS", 9)
+# --- System Capabilities Toggle ---
+MODEL_SUPPORTS_VISION = True
+MODEL_SUPPORTS_THINKING = False
+MODEL_SUPPORTS_WEBSEARCH = True
+MODEL_SUPPORTS_AUDIO = True
+OMNIPRESENT_MEMORY = False # If true, memory spans across all channels in a server
 
-# --- EXTERNAL SERVICES ---
-IMAGINE_COOLDOWN_SECONDS: int = get_int_env_var("IMAGINE_COOLDOWN_SECONDS", 60)
-STABLE_DIFFUSION_URL: Optional[str] = get_env_var("STABLE_DIFFUSION_URL")
-FONT_PATH: Optional[str] = get_env_var("FONT_PATH")
-GOOGLE_API_KEY: Optional[str] = get_env_var("GOOGLE_API_KEY")
-GOOGLE_CSE_ID: Optional[str] = get_env_var("GOOGLE_CSE_ID")
-GOOGLE_ALLOWED_DOMAINS: List[str] = get_list_env_var("GOOGLE_ALLOWED_DOMAINS")
+# --- Visual Generation (Stable Diffusion) ---
+STABLE_DIFFUSION_URL = "http://127.0.0.1:7860"
+IMAGINE_COOLDOWN_SECONDS = 60
+IMAGE_MAX_DIMENSION = 1024
+IMAGE_COMPRESSION_QUALITY = 85
 
-# --- AUDIO & UTILS ---
-FFMPEG_PATH: str = get_env_var("FFMPEG_PATH", "ffmpeg")
-INACTIVITY_TIMEOUT: int = get_int_env_var("INACTIVITY_TIMEOUT", 60)
-IMAGE_MAX_DIMENSION: int = get_int_env_var("IMAGE_MAX_DIMENSION", 1024)
-IMAGE_COMPRESSION_QUALITY: int = get_int_env_var("IMAGE_COMPRESSION_QUALITY", 85)
-
-# --- RESPONSE TEMPLATES ---
+# --- Constants & Templates ---
 RESPONSE_TEMPLATES = {
-    "audio_failed": get_env_var("MSG_AUDIO_FAILED", "*(voice note couldn't be generated, sorry!)*"),
-    "memory_wiped_channel": get_env_var("MSG_MEMORY_WIPED_CHANNEL", "Memory wiped for this channel."),
-    "memory_wiped_personal": get_env_var("MSG_MEMORY_WIPED_PERSONAL", "Personal memory wiped."),
-    "error_generic": get_env_var("MSG_ERROR_GENERIC", "⚠️ Something went wrong while processing your request."),
-    "error_timeout": get_env_var("MSG_ERROR_TIMEOUT", "⚠️ The AI took too long to respond. Please try again."),
-    "error_download": get_env_var("MSG_ERROR_DOWNLOAD", "⚠️ Failed to download the attached file. Try again."),
+    "error_generic": "An error occurred while processing your request.",
+    "error_timeout": "The request timed out. The AI took too long to respond.",
+    "error_download": "Failed to download the attachment.",
+    "audio_failed": "Failed to synthesize voice audio.",
+    "memory_wiped_channel": "Channel memory successfully erased.",
+    "memory_wiped_personal": "Your personal Direct Message memory has been completely erased."
 }
