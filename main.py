@@ -122,7 +122,6 @@ async def _gather_ai_context(query: str, user: discord.User, context_id: int, is
         custom_persona = await db.get_guild_setting(guild_id, bot_id, "persona_text")
 
     history_limit = 100 if is_owner else 30
-    
     pass_guild_id = guild_id if config.OMNIPRESENT_MEMORY else None
 
     tasks_dict = {
@@ -182,7 +181,7 @@ async def _generate_ai_response(context: Dict[str, Any], is_afk_ping: bool = Fal
         sanitized_memories = sanitize_memory_text(context['long_term_memories'])
         memory_injection = f"--- MEMORY RECALL ---\n{sanitized_memories}\n"
 
-    burst_mode = os.getenv("BURST_TYPING_MODE", "True").lower() in ("true", "1", "yes")
+    burst_mode = config.BURST_TYPING_MODE
     voice_mode = context.get("voice_mode", False)
 
     base_persona = context.get("custom_persona") or config.DEFAULT_PERSONA
@@ -262,7 +261,7 @@ async def _format_and_send_response(response_text: str, meta: Optional[Dict], co
         return 
 
     sent_initial = False
-    burst_mode = os.getenv("BURST_TYPING_MODE", "True").lower() in ("true", "1", "yes")
+    burst_mode = config.BURST_TYPING_MODE
 
     if thinking_text:
         think_chunks = list(chunk_text(f"> *{thinking_text}*\n", size=1950))
@@ -461,15 +460,11 @@ def reset_afk_timer(channel_id: int, user: discord.User, message_content: str = 
         is_sleep_intent = bool(re.search(sleep_keywords, msg_lower))
 
         if is_sleep_intent:
-            min_h = int(os.getenv("SLEEP_AFK_MIN_HOURS", "7"))
-            max_h = int(os.getenv("SLEEP_AFK_MAX_HOURS", "9"))
-            delay_hours = random.randint(min_h, max_h)
+            delay_hours = random.randint(config.SLEEP_AFK_MIN_HOURS, config.SLEEP_AFK_MAX_HOURS)
             next_delay = timedelta(hours=delay_hours)
             logger.info(f"Sleep intent detected for {user.display_name}. Next ping in {delay_hours} hours.")
         else:
-            min_m = int(os.getenv("AFK_MIN_MINUTES", "15"))
-            max_m = int(os.getenv("AFK_MAX_MINUTES", "60"))
-            next_delay = timedelta(minutes=random.randint(min_m, max_m))
+            next_delay = timedelta(minutes=random.randint(config.AFK_MIN_MINUTES, config.AFK_MAX_MINUTES))
 
         afk_tracker[channel_id] = {
             "last_active": datetime.now(),
@@ -515,9 +510,7 @@ async def afk_brain_task():
             
             tracker["is_sleep"] = False
             
-            min_followup = int(os.getenv("AFK_FOLLOWUP_MIN_MINUTES", "20"))
-            max_followup = int(os.getenv("AFK_FOLLOWUP_MAX_MINUTES", "180"))
-            new_delay_minutes = random.randint(min_followup, max_followup)
+            new_delay_minutes = random.randint(config.AFK_FOLLOWUP_MIN_MINUTES, config.AFK_FOLLOWUP_MAX_MINUTES)
             tracker["next_delay"] = timedelta(minutes=new_delay_minutes)
             tracker["last_active"] = now
 
@@ -663,7 +656,7 @@ async def reset_memory(interaction: discord.Interaction):
         logger.error(f"Failed to wipe personal memory: {e}")
         await interaction.followup.send("Failed to clear personal memory.", ephemeral=True)
 
-@bot.tree.command(name="tts", description="Generate text-to-speech audio directly")
+@bot.tree.command(name="tts", description="Generate text-to-speech audio directly (Bypasses AI & History).")
 @app_commands.describe(text="The text you want the bot to say")
 async def tts_command(interaction: discord.Interaction, text: str):
     await interaction.response.defer()
@@ -721,8 +714,7 @@ async def on_message(message: discord.Message):
         })
 
     if not should_respond and is_dynamic_context:
-        env_triggers = [clean_text(w) for w in os.getenv("TRIGGER_WORDS", "bot,ai").split(',')]
-        trigger_words = set(env_triggers)
+        trigger_words = set([clean_text(w) for w in config.TRIGGER_WORDS])
         bot_name_clean = clean_text(bot.user.name)
         trigger_words.add(bot_name_clean)
         if bot_name_clean:
@@ -848,5 +840,5 @@ bot.setup_hook = setup_hook
 
 if __name__ == "__main__":
     if not config.DISCORD_TOKEN:
-        raise SystemExit("FATAL: DISCORD_TOKEN missing in .env.")
+        raise SystemExit("FATAL: DISCORD_TOKEN missing in config.")
     bot.run(config.DISCORD_TOKEN)

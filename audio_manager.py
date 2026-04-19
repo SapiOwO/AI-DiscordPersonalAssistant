@@ -7,15 +7,15 @@ import wave
 import re
 import uuid
 import numpy as np
-from dotenv import load_dotenv
 
-load_dotenv()
+import config
+
 logger = logging.getLogger("audio_manager")
 
 MODEL_DIR = "./audio_models"
 TEMP_DIR = "./temp_audio"
+ASSETS_DIR = "./assets/emotions"
 
-# --- OPTIONAL IMPORTS (Graceful Degradation) ---
 try:
     from faster_whisper import WhisperModel
 except ImportError:
@@ -38,12 +38,10 @@ except ImportError:
     KPipeline = None
 
 try:
-    from pedalboard import Pedalboard, Compressor, HighpassFilter, PeakFilter, HighShelfFilter, Reverb
+    from pedalboard import Pedalboard, Compressor, HighpassFilter, PeakFilter, HighShelfFilter, Reverb, PitchShift
 except ImportError:
     Pedalboard = None
 
-
-# --- PIPER CONFIG ---
 PIPER_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx"
 PIPER_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json"
 
@@ -57,6 +55,7 @@ kokoro_pipeline = None
 def _ensure_dirs():
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
+    os.makedirs(ASSETS_DIR, exist_ok=True)
 
 async def download_file(url, dest):
     if not os.path.exists(dest):
@@ -73,21 +72,18 @@ async def init_models():
     global whisper_model, piper_voice, kokoro_pipeline
     _ensure_dirs()
 
-    # 1. Initialize STT (Whisper)
     if WhisperModel:
         logger.info("Initializing Faster-Whisper (STT) on CPU...")
         whisper_model = WhisperModel("base.en", device="cpu", compute_type="int8")
     else:
         logger.warning("faster-whisper is not installed. STT disabled.")
 
-    # 2. Determine TTS Engine
-    tts_engine = os.getenv("TTS_ENGINE", "kokoro").lower()
+    tts_engine = config.TTS_ENGINE.lower()
 
     if tts_engine == "kokoro":
         if KPipeline:
             logger.info("Initializing Kokoro-82M TTS Engine...")
-            voice_id = os.getenv("TTS_VOICE", "af_heart")
-            # 'a' for American English, 'b' for British English based on voice prefix
+            voice_id = config.TTS_VOICE
             lang_code = voice_id[0] if voice_id else 'a'
             kokoro_pipeline = KPipeline(lang_code=lang_code)
             logger.info(f"Kokoro-82M Pipeline Initialized with voice: {voice_id}")
@@ -125,7 +121,7 @@ async def transcribe(audio_bytes: bytes) -> str:
         f.write(audio_bytes)
 
     try:
-        ffmpeg_path = os.getenv("FFMPEG_PATH", "ffmpeg")
+        ffmpeg_path = config.FFMPEG_PATH
         process = await asyncio.create_subprocess_exec(
             ffmpeg_path, '-y', '-i', temp_in, '-ar', '16000', '-ac', '1', temp_wav,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -142,9 +138,7 @@ async def transcribe(audio_bytes: bytes) -> str:
         if os.path.exists(temp_in): os.remove(temp_in)
         if os.path.exists(temp_wav): os.remove(temp_wav)
 
-
-# --- SAPI's SECRET SAUCE 1: The Director (Pre-Processing) ---
-def preprocess_text_for_tts(text: str) -> str:
+def preprocess_text_for_tts(text: str):
     abbreviations = {
         r"\blol\b": "haha",
         r"\blmao\b": "oh my god",
@@ -160,56 +154,74 @@ def preprocess_text_for_tts(text: str) -> str:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
     text = re.sub(r'\b(and|but|so|because)\b', r',\1', text, flags=re.IGNORECASE)
-    
-    text = text.replace("...", "... ")
-    text = text.replace(",,", ",")
-    text = text.replace(" ,", ",")
+    text = text.replace("...", "... ").replace(",,", ",").replace(" ,", ",")
 
-    return text.strip()
+    parts = re.split(r'(\[[a-zA-Z0-9:]+\])', text)
+    processed_parts = []
+    
+    for part in parts:
+        if not part.strip():
+            continue
+        if part.startswith('[') and part.endswith(']'):
+            processed_parts.append(('tag', part.strip('[]').lower()))
+        else:
+            processed_parts.append(('text', part.strip()))
+            
+    return processed_parts
+
+def generate_musical_hum(base_audio: np.ndarray, sample_rate: int, pattern="scale_up") -> np.ndarray:
+    if Pedalboard is None:
+        return base_audio
+
+    if pattern == "scale_up":
+        steps = [0, 2, 4] 
+    elif pattern == "thinking":
+        steps = [0, -2, 0] 
+    else:
+        steps = [0]
+
+    segments = []
+    for step in steps:
+        shift = PitchShift(semitones=step)
+        shifted = shift(base_audio, sample_rate)
+        segments.append(shifted)
+    
+    return np.concatenate(segments)
 
 def apply_studio_mastering(audio_array: np.ndarray, sample_rate: int) -> np.ndarray:
     if Pedalboard is None:
         return audio_array
     
-    logger.info("Applying 200% Aggressive Punchy & Crisp Mastering...")
+    logger.info("Applying Audiophile Mastering with Dithered Tail Recovery...")
+    
+    tail_duration = 2.0 
+    tail_samples = int(tail_duration * sample_rate)
+    dither_pad = np.random.normal(0, 0.00001, tail_samples).astype(audio_array.dtype)
+    
+    padded_audio = np.concatenate((audio_array, dither_pad))
+
+    if padded_audio.ndim == 1:
+        stereo_audio = np.vstack((padded_audio, padded_audio))
+    else:
+        stereo_audio = padded_audio
+
     board = Pedalboard([
-        # 1. High-Pass Filter: Cut sub-bass rumble
-        HighpassFilter(cutoff_frequency_hz=85),
-        
-        # 2. Extreme Body/Punch Boost: Double the low-mid weight
-        PeakFilter(cutoff_frequency_hz=200, gain_db=3.0, q=1.0),
-        
-        # 3. Extreme Corrective EQ: aggressively scoop boxy/muddy frequencies
-        PeakFilter(cutoff_frequency_hz=400, gain_db=-5.0, q=1.5),
-        
-        # 4. Hyper-Crisp Presence: Push articulation heavily
-        PeakFilter(cutoff_frequency_hz=4500, gain_db=6.0, q=1.0),
-        
-        # 5. Extreme Air/Sparkle: 200% boost on the high-end for 96kHz clarity
-        HighShelfFilter(cutoff_frequency_hz=10000, gain_db=8.0),
-        
-        # 6. Ultra-Punchy Compression: Heavy "In-your-face" radio compression
-        Compressor(threshold_db=-24, ratio=6.0, attack_ms=15, release_ms=80),
-        
-        # 7. Micro-Reverb: Extremely tight, almost dry to prevent tail cuts
-        Reverb(room_size=0.05, wet_level=0.02, dry_level=0.98)
+        HighpassFilter(cutoff_frequency_hz=60),
+        PeakFilter(cutoff_frequency_hz=300, gain_db=-1.5, q=1.5),
+        PeakFilter(cutoff_frequency_hz=3500, gain_db=1.5, q=1.0),
+        HighShelfFilter(cutoff_frequency_hz=10000, gain_db=2.0),
+        Compressor(threshold_db=-12, ratio=2.0, attack_ms=15, release_ms=250),
+        Reverb(room_size=0.2, damping=0.4, wet_level=0.08, dry_level=0.95, width=1.0) 
     ])
     
-    # Pedalboard expects shape (channels, samples)
-    if audio_array.ndim == 1:
-        audio_array = np.expand_dims(audio_array, axis=0)
-        
-    effected_audio = board(audio_array, sample_rate=sample_rate)
-    
-    # Convert back to 1D array
-    return effected_audio.squeeze()
-
+    effected_audio = board(stereo_audio, sample_rate=sample_rate)
+    return effected_audio
 
 async def synthesize(text: str) -> bytes:
     if not text:
         return None
         
-    engine = os.getenv("TTS_ENGINE", "kokoro").lower()
+    engine = config.TTS_ENGINE.lower()
     if engine == "kokoro" and kokoro_pipeline is None:
         engine = "piper"
         
@@ -220,86 +232,95 @@ async def synthesize(text: str) -> bytes:
     temp_combined_wav = os.path.join(TEMP_DIR, f"out_{uuid.uuid4().hex}.wav")
     temp_ogg = os.path.join(TEMP_DIR, f"out_{uuid.uuid4().hex}.ogg")
     
-    processed_text = preprocess_text_for_tts(text)
+    segments = preprocess_text_for_tts(text)
+    audio_chunks = []
+    
+    global_sr = 24000 if engine == "kokoro" else 22050
 
     try:
-        if engine == "kokoro" and KPipeline is not None and sf is not None:
-            voice_id = os.getenv("TTS_VOICE", "af_heart")
-            logger.info(f"Generating Kokoro TTS with voice: {voice_id}")
+        voice_id = config.TTS_VOICE
+        
+        for kind, content in segments:
+            if not content: continue
             
-            # Generate audio chunks
-            generator = kokoro_pipeline(processed_text, voice=voice_id, speed=1.0, split_pattern=r'\n+')
-            audio_chunks = []
-            
-            for i, (gs, ps, audio) in enumerate(generator):
-                audio_chunks.append(audio)
+            if kind == 'text':
+                if engine == "kokoro" and KPipeline is not None:
+                    generator = kokoro_pipeline(content, voice=voice_id, speed=1.0, split_pattern=r'\n+')
+                    for _, _, audio in generator:
+                        audio_chunks.append(audio)
                 
-            if not audio_chunks:
-                return None
-                
-            combined_audio = np.concatenate(audio_chunks)
-            mastered_audio = apply_studio_mastering(combined_audio, 24000)
-            
-            # Save to WAV
-            sf.write(temp_combined_wav, mastered_audio, 24000)
-            
-        else: # Piper Fallback
-            logger.info("Generating Piper TTS audio...")
-            temp_dir_batch = os.path.join(TEMP_DIR, f"batch_{uuid.uuid4().hex}")
-            os.makedirs(temp_dir_batch, exist_ok=True)
-            sentences = re.split(r'(?<=[.!?])\s+', processed_text)
-            
-            segment_paths = []
-            for i, sentence in enumerate(sentences):
-                sentence = sentence.strip()
-                if not sentence: continue
-                seg_path = os.path.join(temp_dir_batch, f"seg_{i}.wav")
-                with wave.open(seg_path, "wb") as wav_file:
-                    syn_config = SynthesisConfig(
-                        length_scale=1.1,
-                        noise_scale=0.75,
-                        noise_w_scale=0.85,
-                    )
-                    piper_voice.synthesize_wav(sentence, wav_file, syn_config=syn_config)
-                segment_paths.append(seg_path)
-
-            if not segment_paths:
-                return None
-
-            # Combine Piper chunks and optionally master them if soundfile/pedalboard are available
-            if sf is not None and Pedalboard is not None:
-                audio_chunks = []
-                sample_rate = 22050
-                for p in segment_paths:
-                    data, sr = sf.read(p)
-                    audio_chunks.append(data)
-                    sample_rate = sr
-                
-                combined_audio = np.concatenate(audio_chunks)
-                mastered_audio = apply_studio_mastering(combined_audio, sample_rate)
-                sf.write(temp_combined_wav, mastered_audio, sample_rate)
-            else:
-                # Basic WAV concatenation if no soundfile library
-                data = []
-                for p in segment_paths:
-                    w = wave.open(p, 'rb')
-                    data.append([w.getparams(), w.readframes(w.getnframes())])
-                    w.close()
-                with wave.open(temp_combined_wav, 'wb') as output:
-                    output.setparams(data[0][0])
-                    for params, frames in data:
-                        output.writeframes(frames)
+                elif engine == "piper":
+                    temp_dir_batch = os.path.join(TEMP_DIR, f"batch_{uuid.uuid4().hex}")
+                    os.makedirs(temp_dir_batch, exist_ok=True)
+                    sub_sentences = re.split(r'(?<=[.!?])\s+', content)
+                    
+                    for i, sentence in enumerate(sub_sentences):
+                        sentence = sentence.strip()
+                        if not sentence: continue
+                        seg_path = os.path.join(temp_dir_batch, f"seg_{i}.wav")
+                        with wave.open(seg_path, "wb") as wav_file:
+                            wav_file.setnchannels(1)
+                            wav_file.setsampwidth(2)
+                            wav_file.setframerate(22050)
+                            piper_voice.synthesize(
+                                sentence, 
+                                wav_file, 
+                                length_scale=1.1, 
+                                noise_scale=0.75, 
+                                noise_w_scale=0.85
+                            )
                         
-            # Cleanup piper segments
-            for p in segment_paths:
-                if os.path.exists(p): os.remove(p)
-            if os.path.exists(temp_dir_batch): os.rmdir(temp_dir_batch)
+                        if sf is not None:
+                            data, sr = sf.read(seg_path)
+                            audio_chunks.append(data)
+                        os.remove(seg_path)
+                    os.rmdir(temp_dir_batch)
 
-        # Convert WAV to OGG Opus via FFmpeg
-        ffmpeg_path = os.getenv("FFMPEG_PATH", "ffmpeg")
+            elif kind == 'tag':
+                if content == 'laugh':
+                    laugh_path = os.path.join(ASSETS_DIR, "human_laugh.wav")
+                    if sf is not None and os.path.exists(laugh_path):
+                        data, sr = sf.read(laugh_path)
+                        if sr != global_sr and len(data) > 0:
+                            data = np.interp(np.linspace(0, len(data), int(len(data) * global_sr / sr)), np.arange(len(data)), data)
+                        if data.ndim > 1: data = data.mean(axis=1) 
+                        audio_chunks.append(data)
+                        
+                elif content in ['hmm', 'hum:up']:
+                    if engine == "kokoro" and KPipeline is not None:
+                        generator = kokoro_pipeline("mmm", voice=voice_id, speed=0.8)
+                        pattern = "thinking" if content == 'hmm' else "scale_up"
+                        for _, _, audio in generator:
+                            hummed = generate_musical_hum(audio, global_sr, pattern)
+                            audio_chunks.append(hummed)
+                    elif engine == "piper":
+                        temp_hum = os.path.join(TEMP_DIR, f"hum_{uuid.uuid4().hex}.wav")
+                        with wave.open(temp_hum, "wb") as w:
+                            w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050)
+                            piper_voice.synthesize("mmm", w)
+                        if sf is not None:
+                            data, _ = sf.read(temp_hum)
+                            pattern = "thinking" if content == 'hmm' else "scale_up"
+                            hummed = generate_musical_hum(data, global_sr, pattern)
+                            audio_chunks.append(hummed)
+                        os.remove(temp_hum)
+
+        if not audio_chunks:
+            return None
+
+        combined_mono_audio = np.concatenate(audio_chunks)
+        
+        if sf is not None and Pedalboard is not None:
+            final_stereo_audio = apply_studio_mastering(combined_mono_audio, global_sr)
+            sf.write(temp_combined_wav, final_stereo_audio.T, global_sr)
+        else:
+            if sf is not None:
+                sf.write(temp_combined_wav, combined_mono_audio, global_sr)
+
+        ffmpeg_path = config.FFMPEG_PATH
         process = await asyncio.create_subprocess_exec(
             ffmpeg_path, '-y', '-i', temp_combined_wav,
-            '-c:a', 'libopus', '-b:a', '96k', '-application', 'voip',
+            '-c:a', 'libopus', '-b:a', '96k', '-ac', '2', '-application', 'voip',
             temp_ogg, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         stdout, stderr = await process.communicate()
@@ -313,7 +334,7 @@ async def synthesize(text: str) -> bytes:
         return ogg_bytes
 
     except Exception as e:
-        logger.error(f"TTS synthesis error: {e}", exc_info=True)
+        logger.error(f"Hybrid Synthesis error: {e}", exc_info=True)
         return None
     finally:
         if os.path.exists(temp_combined_wav):
