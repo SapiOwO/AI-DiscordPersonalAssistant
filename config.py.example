@@ -25,14 +25,14 @@ GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 # --- Ollama Settings ---
 OLLAMA_HOST = "http://localhost:11434"
 OLLAMA_MODEL = "gemma4:e4b-it-q4_K_M" # Change to your downloaded model
-OLLAMA_TIMEOUT = 1200
+OLLAMA_TIMEOUT = 120
 OLLAMA_TEMPERATURE = 0.7
 OLLAMA_TOP_K = 40
 OLLAMA_TOP_P = 0.9
 OLLAMA_NUM_CTX = 8192
 
 # --- Persona & Roles ---
-DEFAULT_PERSONA = "You helpful AI assistant. Keep responses concise and direct. Use varied sentence length. When user say read the script, you understand them and just obey and starts reading the script they gave to you"
+DEFAULT_PERSONA = "You helpful AI assistant. Keep responses concise and direct. Use varied sentence length."
 PERSONA_ALLOWED_ROLES = ["Admin", "Moderator"]
 
 # --- Chat Mechanics ---
@@ -42,8 +42,8 @@ MAX_DOCS_PER_QUERY = 8 # Number of web search results to inject
 
 # --- Voice & Text-to-Speech (TTS) ---
 TTS_ENGINE = "kokoro" # Options: 'kokoro' or 'piper'
-TTS_VOICE_PIPER = "en_US-hfc_female-medium" # Best voice: en_US-hfc_female-medium, en_US-libritts_r-medium, en_US-amy-medium. For more voices please follow this link https://rhasspy.github.io/piper-samples/
-TTS_VOICE_KOKORO = "af_heart" # Best voice: af_heart, af_bella, bf_emma. For more voices please follow this link https://github.com/hexgrad/kokoro
+TTS_VOICE_PIPER = "en_US-amy-medium" # Best voice: en_US-hfc_female-medium, en_US-libritts_r-medium, en_US-amy-medium. For more voices please follow this link https://rhasspy.github.io/piper-samples/
+TTS_VOICE_KOKORO = "bf_emma" # Best voice: af_heart, af_bella, bf_emma. For more voices please follow this link https://github.com/hexgrad/kokoro
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg") # Pulls from env if custom path needed
 
 # --- Status & Presence ---
@@ -66,7 +66,7 @@ MODEL_SUPPORTS_VISION = True
 MODEL_SUPPORTS_THINKING = False
 MODEL_SUPPORTS_WEBSEARCH = True
 MODEL_SUPPORTS_AUDIO = True
-OMNIPRESENT_MEMORY = True # If true, memory spans across all channels in a server
+OMNIPRESENT_MEMORY = False # If true, memory spans across all channels in a server
 
 # --- Visual Generation (Stable Diffusion) ---
 STABLE_DIFFUSION_URL = "http://127.0.0.1:7860"

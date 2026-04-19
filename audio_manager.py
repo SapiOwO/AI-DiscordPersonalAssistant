@@ -45,9 +45,6 @@ except ImportError:
 PIPER_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx"
 PIPER_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json"
 
-model_path = os.path.join(MODEL_DIR, "en_US-hfc_female-medium.onnx")
-config_path = os.path.join(MODEL_DIR, "en_US-hfc_female-medium.onnx.json")
-
 whisper_model = None
 piper_voice = None
 kokoro_pipeline = None
@@ -66,7 +63,7 @@ async def download_file(url, dest):
                     with open(dest, 'wb') as f:
                         f.write(await response.read())
                 else:
-                    logger.error(f"Failed to download {url}")
+                    logger.error(f"Failed to download {url}. HTTP Status: {response.status}")
 
 async def init_models():
     global whisper_model, piper_voice, kokoro_pipeline
@@ -83,7 +80,7 @@ async def init_models():
     if tts_engine == "kokoro":
         if KPipeline:
             logger.info("Initializing Kokoro-82M TTS Engine...")
-            voice_id = config.TTS_VOICE
+            voice_id = getattr(config, "TTS_VOICE_KOKORO", "af_heart")
             lang_code = voice_id[0] if voice_id else 'a'
             kokoro_pipeline = KPipeline(lang_code=lang_code)
             logger.info(f"Kokoro-82M Pipeline Initialized with voice: {voice_id}")
@@ -93,12 +90,33 @@ async def init_models():
 
     if tts_engine == "piper":
         if PiperVoice:
-            logger.info("Loading Piper Voice (TTS)...")
-            await download_file(PIPER_MODEL_URL, model_path)
-            await download_file(PIPER_CONFIG_URL, config_path)
-            if os.path.exists(model_path) and os.path.exists(config_path):
-                piper_voice = PiperVoice.load(model_path, config_path)
-                logger.info("Piper TTS Engine Initialized.")
+            piper_voice_name = getattr(config, "TTS_VOICE_PIPER", "en_US-hfc_female-medium")
+            logger.info(f"Loading Piper Voice (TTS): {piper_voice_name}...")
+            
+            try:
+                parts = piper_voice_name.split('-')
+                lang = parts[0]
+                lang_family = lang.split('_')[0]
+                voice = parts[1]
+                quality = parts[2]
+
+                base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/{lang_family}/{lang}/{voice}/{quality}"
+                piper_model_url = f"{base_url}/{piper_voice_name}.onnx"
+                piper_config_url = f"{base_url}/{piper_voice_name}.onnx.json"
+
+                model_path = os.path.join(MODEL_DIR, f"{piper_voice_name}.onnx")
+                config_path = os.path.join(MODEL_DIR, f"{piper_voice_name}.onnx.json")
+
+                await download_file(piper_model_url, model_path)
+                await download_file(piper_config_url, config_path)
+
+                if os.path.exists(model_path) and os.path.exists(config_path):
+                    piper_voice = PiperVoice.load(model_path, config_path)
+                    logger.info(f"Piper TTS Engine Initialized with {piper_voice_name}.")
+                else:
+                    logger.error("Failed to initialize Piper: Model files not found after download attempt.")
+            except Exception as e:
+                logger.error(f"Error parsing Piper voice format: {e}. Please use format 'lang-voice-quality'.")
         else:
             logger.error("Piper is not installed! TTS will be unavailable.")
 
@@ -138,7 +156,10 @@ async def transcribe(audio_bytes: bytes) -> str:
         if os.path.exists(temp_in): os.remove(temp_in)
         if os.path.exists(temp_wav): os.remove(temp_wav)
 
+
 def preprocess_text_for_tts(text: str):
+    text = re.sub(r'[*_~`"\']', '', text)
+
     abbreviations = {
         r"\blol\b": "haha",
         r"\blmao\b": "oh my god",
@@ -155,6 +176,7 @@ def preprocess_text_for_tts(text: str):
 
     text = re.sub(r'\b(and|but|so|because)\b', r',\1', text, flags=re.IGNORECASE)
     text = text.replace("...", "... ").replace(",,", ",").replace(" ,", ",")
+    text = text.replace("—", ", ")
 
     parts = re.split(r'(\[[a-zA-Z0-9:]+\])', text)
     processed_parts = []
@@ -192,11 +214,14 @@ def apply_studio_mastering(audio_array: np.ndarray, sample_rate: int) -> np.ndar
     if Pedalboard is None:
         return audio_array
     
-    logger.info("Applying Audiophile Mastering with Dithered Tail Recovery...")
+    # FIX 1: Ensure the incoming audio array is strictly float32 (required by Pedalboard)
+    audio_array = audio_array.astype(np.float32)
     
     tail_duration = 2.0 
     tail_samples = int(tail_duration * sample_rate)
-    dither_pad = np.random.normal(0, 0.00001, tail_samples).astype(audio_array.dtype)
+    
+    # FIX 2: Ensure dither array is perfectly sized and typed
+    dither_pad = np.random.normal(0, 0.00001, size=tail_samples).astype(np.float32)
     
     padded_audio = np.concatenate((audio_array, dither_pad))
 
@@ -217,15 +242,19 @@ def apply_studio_mastering(audio_array: np.ndarray, sample_rate: int) -> np.ndar
     effected_audio = board(stereo_audio, sample_rate=sample_rate)
     return effected_audio
 
+
 async def synthesize(text: str) -> bytes:
     if not text:
+        logger.warning("TTS: Received empty text to synthesize.")
         return None
         
     engine = config.TTS_ENGINE.lower()
     if engine == "kokoro" and kokoro_pipeline is None:
+        logger.warning("TTS: Kokoro requested but not loaded. Falling back to Piper.")
         engine = "piper"
         
     if engine == "piper" and piper_voice is None:
+        logger.error("TTS: No TTS engines are loaded.")
         return None
 
     _ensure_dirs()
@@ -233,18 +262,20 @@ async def synthesize(text: str) -> bytes:
     temp_ogg = os.path.join(TEMP_DIR, f"out_{uuid.uuid4().hex}.ogg")
     
     segments = preprocess_text_for_tts(text)
+    if not segments:
+        logger.warning("TTS: No valid text segments left after preprocessing.")
+        return None
+
     audio_chunks = []
-    
     global_sr = 24000 if engine == "kokoro" else 22050
 
     try:
-        voice_id = config.TTS_VOICE
-        
         for kind, content in segments:
             if not content: continue
             
             if kind == 'text':
                 if engine == "kokoro" and KPipeline is not None:
+                    voice_id = getattr(config, "TTS_VOICE_KOKORO", "af_heart")
                     generator = kokoro_pipeline(content, voice=voice_id, speed=1.0, split_pattern=r'\n+')
                     for _, _, audio in generator:
                         audio_chunks.append(audio)
@@ -258,17 +289,18 @@ async def synthesize(text: str) -> bytes:
                         sentence = sentence.strip()
                         if not sentence: continue
                         seg_path = os.path.join(temp_dir_batch, f"seg_{i}.wav")
+                        
                         with wave.open(seg_path, "wb") as wav_file:
                             wav_file.setnchannels(1)
                             wav_file.setsampwidth(2)
                             wav_file.setframerate(22050)
-                            piper_voice.synthesize(
-                                sentence, 
-                                wav_file, 
-                                length_scale=1.1, 
-                                noise_scale=0.75, 
+                            
+                            syn_config = SynthesisConfig(
+                                length_scale=1.1,
+                                noise_scale=0.75,
                                 noise_w_scale=0.85
                             )
+                            piper_voice.synthesize_wav(sentence, wav_file, syn_config=syn_config)
                         
                         if sf is not None:
                             data, sr = sf.read(seg_path)
@@ -288,6 +320,7 @@ async def synthesize(text: str) -> bytes:
                         
                 elif content in ['hmm', 'hum:up']:
                     if engine == "kokoro" and KPipeline is not None:
+                        voice_id = getattr(config, "TTS_VOICE_KOKORO", "af_heart")
                         generator = kokoro_pipeline("mmm", voice=voice_id, speed=0.8)
                         pattern = "thinking" if content == 'hmm' else "scale_up"
                         for _, _, audio in generator:
@@ -296,8 +329,12 @@ async def synthesize(text: str) -> bytes:
                     elif engine == "piper":
                         temp_hum = os.path.join(TEMP_DIR, f"hum_{uuid.uuid4().hex}.wav")
                         with wave.open(temp_hum, "wb") as w:
-                            w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050)
-                            piper_voice.synthesize("mmm", w)
+                            w.setnchannels(1)
+                            w.setsampwidth(2)
+                            w.setframerate(22050)
+                            syn_config = SynthesisConfig(length_scale=1.1, noise_scale=0.75, noise_w_scale=0.85)
+                            piper_voice.synthesize_wav("mmm", w, syn_config=syn_config)
+                            
                         if sf is not None:
                             data, _ = sf.read(temp_hum)
                             pattern = "thinking" if content == 'hmm' else "scale_up"
@@ -306,16 +343,24 @@ async def synthesize(text: str) -> bytes:
                         os.remove(temp_hum)
 
         if not audio_chunks:
+            logger.warning("TTS: No audio chunks generated. Teks mungkin hanya berisi karakter tidak terbaca.")
             return None
 
-        combined_mono_audio = np.concatenate(audio_chunks)
+        # FIX 3: Ensure Float32 before Master
+        combined_mono_audio = np.concatenate(audio_chunks).astype(np.float32)
         
         if sf is not None and Pedalboard is not None:
             final_stereo_audio = apply_studio_mastering(combined_mono_audio, global_sr)
+            # Transpose to (frames, channels) for soundfile writing
             sf.write(temp_combined_wav, final_stereo_audio.T, global_sr)
         else:
             if sf is not None:
                 sf.write(temp_combined_wav, combined_mono_audio, global_sr)
+
+        # FIX 4: Safety check if WAV file was actually created and has size
+        if not os.path.exists(temp_combined_wav) or os.path.getsize(temp_combined_wav) == 0:
+            logger.error("TTS: WAV file creation failed or file is empty before FFmpeg.")
+            return None
 
         ffmpeg_path = config.FFMPEG_PATH
         process = await asyncio.create_subprocess_exec(
@@ -331,6 +376,11 @@ async def synthesize(text: str) -> bytes:
 
         with open(temp_ogg, "rb") as f:
             ogg_bytes = f.read()
+            
+        if not ogg_bytes:
+            logger.error("TTS: Output OGG file is empty.")
+            return None
+            
         return ogg_bytes
 
     except Exception as e:

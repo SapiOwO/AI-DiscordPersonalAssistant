@@ -1,5 +1,6 @@
 # Credentials
 .env
+config.py
 
 # Environments
 bot-env/
@@ -12,9 +13,10 @@ __pycache__/
 *$py.class
 *.spec
 
-# AI Audio Assets (Crucial: Prevents repo bloat)
+# AI Audio Assets (Prevents repo bloat)
 audio_models/
 temp_audio/
+assets/emotions/human_laugh.wav
 
 # AI Memory & Local Vector DB
 chroma_db/
