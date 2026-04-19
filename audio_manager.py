@@ -1,4 +1,14 @@
 import os
+
+os.environ["ORT_LOGGING_LEVEL"] = "4"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
+try:
+    import onnxruntime as ort
+    ort.set_default_logger_severity(4)
+except ImportError:
+    pass
+
 import asyncio
 import aiohttp
 import logging
@@ -9,6 +19,11 @@ import uuid
 import numpy as np
 
 import config
+
+try:
+    import torch
+except ImportError:
+    pass
 
 logger = logging.getLogger("audio_manager")
 
@@ -42,9 +57,6 @@ try:
 except ImportError:
     Pedalboard = None
 
-PIPER_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx"
-PIPER_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json"
-
 whisper_model = None
 piper_voice = None
 kokoro_pipeline = None
@@ -69,21 +81,28 @@ async def init_models():
     global whisper_model, piper_voice, kokoro_pipeline
     _ensure_dirs()
 
+    device_setting = getattr(config, "TTS_DEVICE", "cpu").lower()
+    use_cuda = (device_setting == "cuda")
+
     if WhisperModel:
         logger.info("Initializing Faster-Whisper (STT) on CPU...")
         whisper_model = WhisperModel("base.en", device="cpu", compute_type="int8")
     else:
         logger.warning("faster-whisper is not installed. STT disabled.")
 
-    tts_engine = config.TTS_ENGINE.lower()
+    tts_engine = getattr(config, "TTS_ENGINE", "kokoro").lower()
 
     if tts_engine == "kokoro":
         if KPipeline:
-            logger.info("Initializing Kokoro-82M TTS Engine...")
+            logger.info(f"Initializing Kokoro-82M TTS Engine on {device_setting.upper()}...")
             voice_id = getattr(config, "TTS_VOICE_KOKORO", "af_heart")
             lang_code = voice_id[0] if voice_id else 'a'
-            kokoro_pipeline = KPipeline(lang_code=lang_code)
-            logger.info(f"Kokoro-82M Pipeline Initialized with voice: {voice_id}")
+            try:
+                kokoro_pipeline = KPipeline(lang_code=lang_code, device=device_setting)
+                logger.info(f"Kokoro-82M Pipeline Initialized with voice: {voice_id}")
+            except Exception as e:
+                logger.error(f"Failed to initialize Kokoro on {device_setting}: {e}")
+                tts_engine = "piper"
         else:
             logger.error("Kokoro is not installed! Falling back to Piper.")
             tts_engine = "piper"
@@ -91,7 +110,7 @@ async def init_models():
     if tts_engine == "piper":
         if PiperVoice:
             piper_voice_name = getattr(config, "TTS_VOICE_PIPER", "en_US-hfc_female-medium")
-            logger.info(f"Loading Piper Voice (TTS): {piper_voice_name}...")
+            logger.info(f"Loading Piper Voice (TTS): {piper_voice_name} on {'CUDA' if use_cuda else 'CPU'}...")
             
             try:
                 parts = piper_voice_name.split('-')
@@ -111,7 +130,7 @@ async def init_models():
                 await download_file(piper_config_url, config_path)
 
                 if os.path.exists(model_path) and os.path.exists(config_path):
-                    piper_voice = PiperVoice.load(model_path, config_path)
+                    piper_voice = PiperVoice.load(model_path, config_path, use_cuda=use_cuda)
                     logger.info(f"Piper TTS Engine Initialized with {piper_voice_name}.")
                 else:
                     logger.error("Failed to initialize Piper: Model files not found after download attempt.")
@@ -127,7 +146,6 @@ async def init_models():
 
     logger.info("Native Audio system initialization complete.")
 
-
 async def transcribe(audio_bytes: bytes) -> str:
     if whisper_model is None:
         return ""
@@ -139,7 +157,7 @@ async def transcribe(audio_bytes: bytes) -> str:
         f.write(audio_bytes)
 
     try:
-        ffmpeg_path = config.FFMPEG_PATH
+        ffmpeg_path = getattr(config, "FFMPEG_PATH", "ffmpeg")
         process = await asyncio.create_subprocess_exec(
             ffmpeg_path, '-y', '-i', temp_in, '-ar', '16000', '-ac', '1', temp_wav,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -155,7 +173,6 @@ async def transcribe(audio_bytes: bytes) -> str:
     finally:
         if os.path.exists(temp_in): os.remove(temp_in)
         if os.path.exists(temp_wav): os.remove(temp_wav)
-
 
 def preprocess_text_for_tts(text: str):
     text = re.sub(r'[*_~`"\']', '', text)
@@ -214,13 +231,9 @@ def apply_studio_mastering(audio_array: np.ndarray, sample_rate: int) -> np.ndar
     if Pedalboard is None:
         return audio_array
     
-    # FIX 1: Ensure the incoming audio array is strictly float32 (required by Pedalboard)
     audio_array = audio_array.astype(np.float32)
-    
     tail_duration = 2.0 
     tail_samples = int(tail_duration * sample_rate)
-    
-    # FIX 2: Ensure dither array is perfectly sized and typed
     dither_pad = np.random.normal(0, 0.00001, size=tail_samples).astype(np.float32)
     
     padded_audio = np.concatenate((audio_array, dither_pad))
@@ -242,13 +255,13 @@ def apply_studio_mastering(audio_array: np.ndarray, sample_rate: int) -> np.ndar
     effected_audio = board(stereo_audio, sample_rate=sample_rate)
     return effected_audio
 
-
 async def synthesize(text: str) -> bytes:
     if not text:
         logger.warning("TTS: Received empty text to synthesize.")
         return None
         
-    engine = config.TTS_ENGINE.lower()
+    engine = getattr(config, "TTS_ENGINE", "kokoro").lower()
+    
     if engine == "kokoro" and kokoro_pipeline is None:
         logger.warning("TTS: Kokoro requested but not loaded. Falling back to Piper.")
         engine = "piper"
@@ -343,26 +356,23 @@ async def synthesize(text: str) -> bytes:
                         os.remove(temp_hum)
 
         if not audio_chunks:
-            logger.warning("TTS: No audio chunks generated. Teks mungkin hanya berisi karakter tidak terbaca.")
+            logger.warning("TTS: No audio chunks generated. Input might be unreadable characters.")
             return None
 
-        # FIX 3: Ensure Float32 before Master
         combined_mono_audio = np.concatenate(audio_chunks).astype(np.float32)
         
         if sf is not None and Pedalboard is not None:
             final_stereo_audio = apply_studio_mastering(combined_mono_audio, global_sr)
-            # Transpose to (frames, channels) for soundfile writing
             sf.write(temp_combined_wav, final_stereo_audio.T, global_sr)
         else:
             if sf is not None:
                 sf.write(temp_combined_wav, combined_mono_audio, global_sr)
 
-        # FIX 4: Safety check if WAV file was actually created and has size
         if not os.path.exists(temp_combined_wav) or os.path.getsize(temp_combined_wav) == 0:
             logger.error("TTS: WAV file creation failed or file is empty before FFmpeg.")
             return None
 
-        ffmpeg_path = config.FFMPEG_PATH
+        ffmpeg_path = getattr(config, "FFMPEG_PATH", "ffmpeg")
         process = await asyncio.create_subprocess_exec(
             ffmpeg_path, '-y', '-i', temp_combined_wav,
             '-c:a', 'libopus', '-b:a', '96k', '-ac', '2', '-application', 'voip',

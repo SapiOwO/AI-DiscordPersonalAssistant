@@ -1,14 +1,20 @@
-python-dotenv>=1.0.1
-discord.py[voice]>=2.3.2
-ollama>=0.2.1
-aiomysql>=0.2.0
-aiohttp>=3.10.0
-Pillow>=10.4.0
-yt-dlp>=2025.1.0
-chromadb>=0.5.0
-dateparser>=1.2.0
-faster-whisper>=1.0.0
-piper-tts>=1.2.0
-kokoro>=0.7.16
-soundfile>=0.12.1
-pedalboard>=0.9.22
+discord.py
+python-dotenv
+aiomysql
+aiohttp
+httpx
+numpy
+soundfile
+pedalboard
+faster-whisper
+kokoro
+piper-tts
+chromadb
+pillow
+
+# CUDA 12.1 Hardware Acceleration
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
+onnxruntime-gpu
