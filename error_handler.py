@@ -1,14 +1,25 @@
-import discord
 import asyncio
 import logging
 from typing import Optional
-from image_client import ImageGenerationError
+
+import discord
+
+try:
+    from image_client import ImageGenerationError
+except Exception:
+    class ImageGenerationError(Exception):
+        pass
 
 logger = logging.getLogger("error_handler")
 
-async def handle_error(error: Exception, interaction: Optional[discord.Interaction] = None, message: Optional[discord.Message] = None):
+
+async def handle_error(
+    error: Exception,
+    interaction: Optional[discord.Interaction] = None,
+    message: Optional[discord.Message] = None,
+):
     error_msg = "⚠️ An unexpected error occurred. The developers have been notified."
-    ephemeral = True 
+    ephemeral = True
 
     if isinstance(error, ImageGenerationError):
         error_msg = f"🎨 Image generation failed: {error}"
@@ -20,7 +31,7 @@ async def handle_error(error: Exception, interaction: Optional[discord.Interacti
         error_msg = "⚠️ A Discord API error occurred. Please try again later."
     elif isinstance(error, asyncio.TimeoutError):
         error_msg = "⚠️ The request timed out. Please try again."
-    
+
     logger.error(f"An error occurred: {error}", exc_info=True)
 
     try:
@@ -32,4 +43,4 @@ async def handle_error(error: Exception, interaction: Optional[discord.Interacti
         elif message:
             await message.channel.send(error_msg, reference=message, delete_after=20)
     except Exception as e:
-        logger.error(f"Failed to send error message: {e}")
+        logger.error(f"Failed to send error message: {e}", exc_info=True)

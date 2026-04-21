@@ -2,16 +2,17 @@ import os
 import time
 import logging
 import asyncio
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 
 import ollama
 from dotenv import load_dotenv
+
 import config
 
 load_dotenv()
 logger = logging.getLogger("ai_client")
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", None)
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", config.OLLAMA_HOST)
 
 try:
     OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", str(config.OLLAMA_TEMPERATURE)))
@@ -23,6 +24,7 @@ except (ValueError, TypeError):
     OLLAMA_TOP_K = config.OLLAMA_TOP_K
     OLLAMA_TOP_P = config.OLLAMA_TOP_P
     OLLAMA_NUM_CTX = config.OLLAMA_NUM_CTX
+
 
 def get_context_limits() -> Dict[str, Any]:
     num_ctx = max(1024, int(OLLAMA_NUM_CTX))
@@ -65,37 +67,48 @@ def get_context_limits() -> Dict[str, Any]:
         "max_search_snippet_chars": 360,
     }
 
+
 def make_ollama_client():
     kwargs = {}
     if OLLAMA_HOST:
         kwargs["host"] = OLLAMA_HOST
     return ollama.AsyncClient(**kwargs)
 
-async def inspect_and_get_model_capabilities() -> Dict[str, bool]:
-    return get_model_capabilities()
 
 def get_model_capabilities() -> Dict[str, bool]:
     return {
         "supports_vision": config.MODEL_SUPPORTS_VISION,
         "supports_thinking": config.MODEL_SUPPORTS_THINKING,
-        "supports_websearch": config.MODEL_SUPPORTS_WEBSEARCH
+        "supports_websearch": config.MODEL_SUPPORTS_WEBSEARCH,
     }
 
-async def chat_with_model(client: ollama.AsyncClient, model: str, messages: List[Dict], timeout_seconds: int = 120) -> Tuple[str, Dict]:
+
+async def chat_with_model(
+    client: ollama.AsyncClient,
+    model: str,
+    messages: List[Dict],
+    timeout_seconds: Optional[int] = None,
+) -> Tuple[str, Dict]:
     start = time.time()
     options = {
         "temperature": OLLAMA_TEMPERATURE,
         "top_k": OLLAMA_TOP_K,
         "top_p": OLLAMA_TOP_P,
-        "num_ctx": OLLAMA_NUM_CTX
+        "num_ctx": OLLAMA_NUM_CTX,
     }
 
+    async def _call():
+        return await client.chat(model=model, messages=messages, options=options)
+
     try:
-        task = asyncio.create_task(client.chat(model=model, messages=messages, options=options))
-        resp = await asyncio.wait_for(task, timeout=timeout_seconds)
+        if timeout_seconds is None or timeout_seconds <= 0:
+            resp = await _call()
+        else:
+            resp = await asyncio.wait_for(_call(), timeout=timeout_seconds)
+
         elapsed = time.time() - start
         text = resp.get("message", {}).get("content", "")
-        meta = {"tokens_est": int(len(text) / 4), "elapsed": elapsed}
+        meta = {"tokens_est": max(1, int(len(text) / 4)) if text else 0, "elapsed": elapsed}
         return text, meta
     except Exception:
         logger.exception("Model call error")
