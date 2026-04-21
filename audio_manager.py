@@ -61,6 +61,15 @@ whisper_model = None
 piper_voice = None
 kokoro_pipeline = None
 
+def _coerce_audio_array(base_audio) -> np.ndarray:
+    if isinstance(base_audio, np.ndarray):
+        return base_audio.astype(np.float32, copy=False)
+
+    if 'torch' in globals() and hasattr(torch, 'Tensor') and isinstance(base_audio, torch.Tensor):
+        return base_audio.detach().cpu().numpy().astype(np.float32, copy=False)
+
+    return np.asarray(base_audio, dtype=np.float32)
+
 def _ensure_dirs():
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -212,6 +221,8 @@ def generate_musical_hum(base_audio: np.ndarray, sample_rate: int, pattern="scal
     if Pedalboard is None:
         return base_audio
 
+    normalized_audio = _coerce_audio_array(base_audio)
+
     if pattern == "scale_up":
         steps = [0, 2, 4] 
     elif pattern == "thinking":
@@ -222,7 +233,7 @@ def generate_musical_hum(base_audio: np.ndarray, sample_rate: int, pattern="scal
     segments = []
     for step in steps:
         shift = PitchShift(semitones=step)
-        shifted = shift(base_audio, sample_rate)
+        shifted = shift(normalized_audio, sample_rate)
         segments.append(shifted)
     
     return np.concatenate(segments)

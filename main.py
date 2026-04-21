@@ -21,7 +21,7 @@ import image_utils
 import memory_manager
 import audio_manager
 from error_handler import handle_error
-from ai_client import make_ollama_client, chat_with_model, get_model_capabilities
+from ai_client import make_ollama_client, chat_with_model, get_model_capabilities, get_context_limits
 from session_manager import prepare_model_messages
 from utils import parse_thinking_and_response, chunk_text
 
@@ -60,8 +60,43 @@ _INJECTION_PATTERNS = [
 ]
 _INJECTION_RE = re.compile('|'.join(_INJECTION_PATTERNS), flags=re.IGNORECASE)
 
+_DEFAULT_HIDDEN_CHAT_TAGS = {
+    "[laugh]",
+    "[smile]",
+    "[sigh]",
+    "[hmm]",
+    "[hum:up]",
+    "[whisper]",
+    "[shout]",
+    "[scream]",
+    "[giggle]",
+    "[chuckle]",
+}
+_HIDDEN_CHAT_TAGS = {tag.lower() for tag in getattr(config, "TTS_MODE_TAGS", [])}
+_HIDDEN_CHAT_TAGS.update(_DEFAULT_HIDDEN_CHAT_TAGS)
+_BRACKET_TAG_RE = re.compile(r'\[([a-zA-Z0-9:_-]+)\]')
+
 def sanitize_memory_text(text: str) -> str:
     return _INJECTION_RE.sub('[REDACTED]', text)
+
+def strip_hidden_tts_tags(text: str) -> str:
+    if not text:
+        return text
+
+    def _replace(match: re.Match) -> str:
+        full_tag = match.group(0).lower()
+        inner_tag = match.group(1).lower()
+
+        if full_tag in _HIDDEN_CHAT_TAGS:
+            return ""
+        if inner_tag.startswith("voice:"):
+            return ""
+        return match.group(0)
+
+    cleaned = _BRACKET_TAG_RE.sub(_replace, text)
+    cleaned = re.sub(r' {2,}', ' ', cleaned)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    return cleaned.strip()
 
 def get_current_activity():
     activity_map = {
@@ -113,6 +148,7 @@ async def schedule_smart_reminder(delay_seconds: int, user: discord.User, contex
 
 async def _gather_ai_context(query: str, user: discord.User, context_id: int, is_owner: bool, guild_id: Optional[int], guild_name: Optional[str], channel_name: str, channel_topic: Optional[str], include_ram: bool = False, skip_rag: bool = False) -> Dict[str, Any]:
     bot_id = bot.user.id
+    context_limits = get_context_limits()
     
     persona_enabled = False
     custom_persona = None
@@ -121,8 +157,11 @@ async def _gather_ai_context(query: str, user: discord.User, context_id: int, is
         persona_enabled = persona_enabled_str == "True"
         custom_persona = await db.get_guild_setting(guild_id, bot_id, "persona_text")
 
-    history_limit = 100 if is_owner else 30
+    history_limit = context_limits["history_limit_owner"] if is_owner else context_limits["history_limit_user"]
     pass_guild_id = guild_id if config.OMNIPRESENT_MEMORY else None
+    if pass_guild_id:
+        omnipresent_limit = 40 if is_owner else 16
+        history_limit = min(history_limit, omnipresent_limit)
 
     tasks_dict = {
         "channel_history": db.load_conversation_context(
@@ -134,15 +173,30 @@ async def _gather_ai_context(query: str, user: discord.User, context_id: int, is
     }
     
     if not skip_rag:
-        tasks_dict["long_term_memories"] = memory_manager.search_memory(user.id, query, n_results=3)
+        tasks_dict["long_term_memories"] = memory_manager.search_memory(
+            user.id,
+            query,
+            n_results=int(context_limits.get("rag_results", 3)),
+        )
     
     results = await asyncio.gather(*tasks_dict.values())
     context = dict(zip(tasks_dict.keys(), results))
     
     if include_ram and context_id in ram_buffers:
-        ram_history = list(ram_buffers[context_id])
+        max_ram_messages = int(context_limits.get("max_ram_messages", 12))
+        ram_history = list(ram_buffers[context_id])[-max_ram_messages:]
         formatted_ram = [{"role": "user", "username": msg["author_name"], "content": f"[#{msg['channel_name']}] {msg['content']}"} for msg in ram_history]
         context["channel_history"] = context["channel_history"] + formatted_ram
+
+    sanitized_history = []
+    for msg in context.get("channel_history") or []:
+        msg_copy = dict(msg)
+        content = sanitize_memory_text(str(msg_copy.get("content") or ""))
+        if config.CHAT_HIDE_TTS_TAGS:
+            content = strip_hidden_tts_tags(content)
+        msg_copy["content"] = content
+        sanitized_history.append(msg_copy)
+    context["channel_history"] = sanitized_history
 
     context.update({
         "query": query,
@@ -153,7 +207,8 @@ async def _gather_ai_context(query: str, user: discord.User, context_id: int, is
         "channel_name": channel_name,
         "channel_topic": channel_topic,
         "custom_persona": custom_persona if persona_enabled else None,
-        "search_results": []
+        "search_results": [],
+        "context_limits": context_limits,
     })
     
     return context
@@ -176,13 +231,25 @@ async def _generate_ai_response(context: Dict[str, Any], is_afk_ping: bool = Fal
     else:
         location_context += " You are in a private Direct Message."
 
+    context_limits = context.get("context_limits") or {}
+    max_memory_chars = int(context_limits.get("max_memory_chars", 1400))
+
     memory_injection = ""
     if context.get("long_term_memories"):
         sanitized_memories = sanitize_memory_text(context['long_term_memories'])
+        if len(sanitized_memories) > max_memory_chars:
+            sanitized_memories = sanitized_memories[:max_memory_chars].rstrip() + "..."
         memory_injection = f"--- MEMORY RECALL ---\n{sanitized_memories}\n"
 
     burst_mode = config.BURST_TYPING_MODE
     voice_mode = context.get("voice_mode", False)
+
+    output_constraint = ""
+    if config.CHAT_HIDE_TTS_TAGS and not voice_mode:
+        output_constraint = (
+            "\n[OUTPUT CONSTRAINT]\n"
+            "Do not output bracketed TTS or emotion tags such as [laugh], [smile], [hmm], or [voice:normal]."
+        )
 
     base_persona = context.get("custom_persona") or config.DEFAULT_PERSONA
     dynamic_system_prompt = (
@@ -191,6 +258,7 @@ async def _generate_ai_response(context: Dict[str, Any], is_afk_ping: bool = Fal
         f"{location_context}\n"
         f"{memory_injection}"
         f"The user speaking right now is {speaker_name}."
+        f"{output_constraint}"
     ).strip()
     
     context["custom_persona"] = dynamic_system_prompt
@@ -218,6 +286,7 @@ async def _generate_ai_response(context: Dict[str, Any], is_afk_ping: bool = Fal
         burst_mode=burst_mode,
         voice_mode=voice_mode,
         custom_persona=context["custom_persona"],
+        context_limits=context_limits,
     )
     
     client = make_ollama_client()
@@ -225,7 +294,11 @@ async def _generate_ai_response(context: Dict[str, Any], is_afk_ping: bool = Fal
     
     trigger_message = context.get("interaction") or context.get("message")
     
-    db_response_text = text.replace('|', ' ').replace('\n', ' ') if burst_mode else text
+    assistant_text_for_storage = text
+    if config.CHAT_HIDE_TTS_TAGS and not voice_mode:
+        assistant_text_for_storage = strip_hidden_tts_tags(assistant_text_for_storage)
+
+    db_response_text = assistant_text_for_storage.replace('|', ' ').replace('\n', ' ') if burst_mode else assistant_text_for_storage
     await db.save_message(
         bot.user.id, context.get("guild_id"), guild_name, context["context_id"], channel_name,
         trigger_message.id if trigger_message else None, 
@@ -243,6 +316,8 @@ async def _format_and_send_response(response_text: str, meta: Optional[Dict], co
     response_text = response_text.replace('>', '').strip()
 
     thinking_text, main_response = parse_thinking_and_response(response_text)
+    if config.CHAT_HIDE_TTS_TAGS and not voice_reply:
+        main_response = strip_hidden_tts_tags(main_response)
     target_channel = context.get("interaction").channel if context.get("interaction") else (context.get("message").channel if context.get("message") else bot.get_channel(context["context_id"]) or await bot.fetch_user(context["context_id"]))
 
     if voice_reply:
@@ -433,6 +508,8 @@ async def process_ai_request(
         if not skip_rag and not clean_query_for_memory.startswith("[SYSTEM"):
             msg_id_str = str(message.id) if message else str(int(datetime.now().timestamp()))
             thinking_text, clean_response = parse_thinking_and_response(response_text)
+            if config.CHAT_HIDE_TTS_TAGS:
+                clean_response = strip_hidden_tts_tags(clean_response)
 
             user_memory_text = clean_query_for_memory
             if is_new_image:
