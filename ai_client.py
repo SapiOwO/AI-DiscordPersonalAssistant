@@ -31,6 +31,9 @@ def get_context_limits() -> Dict[str, Any]:
 
     if num_ctx <= 4096:
         return {
+            "prompt_mode": "lean",
+            "vision_cache_turns": 0,
+            "image_max_dimension": 480,
             "history_limit_owner": 24,
             "history_limit_user": 12,
             "rag_results": 2,
@@ -44,6 +47,9 @@ def get_context_limits() -> Dict[str, Any]:
 
     if num_ctx <= 8192:
         return {
+            "prompt_mode": "standard",
+            "vision_cache_turns": 1,
+            "image_max_dimension": 720,
             "history_limit_owner": 60,
             "history_limit_user": 20,
             "rag_results": 3,
@@ -56,6 +62,9 @@ def get_context_limits() -> Dict[str, Any]:
         }
 
     return {
+        "prompt_mode": "full",
+        "vision_cache_turns": 5,
+        "image_max_dimension": 1024,
         "history_limit_owner": 100,
         "history_limit_user": 30,
         "rag_results": 3,

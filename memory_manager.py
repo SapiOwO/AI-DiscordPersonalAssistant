@@ -1,136 +1,126 @@
-import asyncio
-import logging
-from datetime import datetime
+"""
+Unified Memory Manager — pgvector on the messages table.
 
-import chromadb
+Embeddings are generated via Ollama's nomic-embed-text and written
+directly onto the same row in the `messages` table that holds the
+chat content.  No separate vector table is needed.
+"""
+
+import logging
+from typing import List, Optional
+
+import httpx
+import db
 
 logger = logging.getLogger("memory_manager")
 
-PREFERRED_ONNX_PROVIDERS = ("CUDAExecutionProvider", "CPUExecutionProvider")
-MAX_MEMORY_ITEM_CHARS = 500
-MAX_MEMORY_TOTAL_CHARS = 2000
+OLLAMA_EMBED_URL = "http://localhost:11434/api/embeddings"
+EMBEDDING_MODEL = "nomic-embed-text"
+EMBEDDING_DIM = 768
 
-try:
-    from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
-except Exception:
-    ONNXMiniLM_L6_V2 = None
 
-def _truncate_text(value: str, max_chars: int) -> str:
-    text = value if isinstance(value, str) else str(value)
-    if len(text) <= max_chars:
-        return text
-    if max_chars <= 3:
-        return text[:max_chars]
-    return text[: max_chars - 3].rstrip() + "..."
+# ─────────────────────────────────────────────
+#  Embedding generation
+# ─────────────────────────────────────────────
 
-def _resolve_preferred_providers():
+async def get_embedding(text: str) -> List[float]:
+    """Request a 768-dim embedding from Ollama nomic-embed-text."""
+    if not text or not text.strip():
+        return []
     try:
-        import onnxruntime as ort
-
-        available = set(ort.get_available_providers())
-        selected = [provider for provider in PREFERRED_ONNX_PROVIDERS if provider in available]
-        if selected:
-            return selected
-        if "CPUExecutionProvider" in available:
-            return ["CPUExecutionProvider"]
-    except Exception as e:
-        logger.debug(f"Could not resolve ONNX providers: {e}")
-    return None
-
-if ONNXMiniLM_L6_V2 is not None:
-    class _DefaultCompatibleONNXEmbedding(ONNXMiniLM_L6_V2):
-        def __init__(self):
-            super().__init__(preferred_providers=_resolve_preferred_providers())
-
-        @staticmethod
-        def name() -> str:
-            return "default"
-
-        @staticmethod
-        def build_from_config(config):
-            return _DefaultCompatibleONNXEmbedding()
-
-        def get_config(self):
-            return {}
-
-        def validate_config_update(self, old_config, new_config):
-            return
-
-        @staticmethod
-        def validate_config(config):
-            return
-else:
-    _DefaultCompatibleONNXEmbedding = None
-
-try:
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    if _DefaultCompatibleONNXEmbedding is not None:
-        try:
-            collection = chroma_client.get_or_create_collection(
-                name="episodic_memory",
-                embedding_function=_DefaultCompatibleONNXEmbedding(),
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                OLLAMA_EMBED_URL,
+                json={"model": EMBEDDING_MODEL, "prompt": text[:2000]},
+                timeout=15.0,
             )
-        except Exception as e:
-            logger.warning(f"Falling back to default Chroma embedding init: {e}")
-            collection = chroma_client.get_or_create_collection(name="episodic_memory")
-    else:
-        collection = chroma_client.get_or_create_collection(name="episodic_memory")
-except Exception as e:
-    logger.error(f"Failed to initialize ChromaDB: {e}")
-    collection = None
+            if resp.status_code == 200:
+                vec = resp.json().get("embedding", [])
+                if len(vec) == EMBEDDING_DIM:
+                    return vec
+                logger.warning(f"Embedding dimension mismatch: got {len(vec)}, expected {EMBEDDING_DIM}")
+                return []
+            logger.warning(f"Ollama embedding HTTP {resp.status_code}: {resp.text[:200]}")
+            return []
+    except Exception as e:
+        logger.error(f"Embedding request failed: {e}")
+        return []
 
-def _save_memory_sync(user_id: int, username: str, role: str, content: str, message_id: str):
-    if not collection or not content or len(content) < 3:
+
+# ─────────────────────────────────────────────
+#  Write embeddings  (unified on messages table)
+# ─────────────────────────────────────────────
+
+async def embed_message(row_id: Optional[int], text_override: Optional[str] = None):
+    """
+    Generate an embedding and store it on an existing messages row.
+
+    Parameters
+    ----------
+    row_id : int
+        The ``messages.id`` returned by ``db.save_message()``.
+    text_override : str, optional
+        If provided, embed this text instead of the stored content.
+        Useful for enriched image descriptions.
+    """
+    if row_id is None:
         return
 
-    doc_id = f"{user_id}_{message_id}"
-    metadata = {
-        "user_id": str(user_id),
-        "username": username,
-        "role": role,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
+    # Determine text to embed
+    embed_text = text_override
+    if not embed_text:
+        # Read the content from the DB row
+        if db.db_pool is None:
+            return
+        async with db.db_pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT content FROM messages WHERE id = $1", row_id)
+            if not row:
+                return
+            embed_text = row["content"]
 
-    try:
-        collection.add(documents=[content], metadatas=[metadata], ids=[doc_id])
-    except Exception as e:
-        logger.error(f"Failed to save vector memory: {e}")
+    if not embed_text or not embed_text.strip():
+        return
 
-async def save_memory(user_id: int, username: str, role: str, content: str, message_id: str):
-    await asyncio.to_thread(_save_memory_sync, user_id, username, role, content, message_id)
+    embedding = await get_embedding(embed_text)
+    if not embedding:
+        return
 
-def _search_memory_sync(user_id: int, query: str, n_results: int = 3) -> str:
-    if not collection or not query or len(query) < 3:
+    await db.update_message_embedding(row_id, embedding)
+    logger.debug(f"Embedded message row {row_id} ({len(embed_text)} chars)")
+
+
+# ─────────────────────────────────────────────
+#  RAG search  (unified on messages table)
+# ─────────────────────────────────────────────
+
+async def search_memory(context_id: int, guild_id: Optional[int], query: str, n_results: int = 3) -> str:
+    """
+    Semantic search over past messages in the current conversational scope.
+
+    Returns a formatted string ready for injection into the prompt,
+    or an empty string if nothing relevant was found.
+    """
+    if not query or not query.strip():
+        return ""
+
+    embedding = await get_embedding(query)
+    if not embedding:
         return ""
 
     try:
-        results = collection.query(
-            query_texts=[query],
-            n_results=n_results,
-            where={"user_id": str(user_id)},
-        )
-
-        if not results["documents"] or not len(results["documents"][0]):
+        rows = await db.vector_search_messages(context_id, guild_id, embedding, n_results)
+        if not rows:
             return ""
 
-        memories = []
-        total_chars = 0
-        for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
-            time_str = meta.get("timestamp", "")
-            role = meta.get("role", "unknown").upper()
-            compact_doc = _truncate_text(doc, MAX_MEMORY_ITEM_CHARS)
-            memory_row = f"[{time_str}] {role}: {compact_doc}"
+        lines = []
+        for r in rows:
+            ts = r["created_at"]
+            t = ts.strftime("%Y-%m-%d %H:%M") if ts else "?"
+            role = (r.get("role") or "user").upper()
+            content = r.get("content") or ""
+            lines.append(f"[{t}] {role}: {content}")
+        return "\n".join(lines)
 
-            if total_chars + len(memory_row) > MAX_MEMORY_TOTAL_CHARS:
-                break
-
-            memories.append(memory_row)
-            total_chars += len(memory_row)
-
-        return "\n".join(memories)
     except Exception as e:
-        logger.error(f"Failed to search vector memory: {e}")
+        logger.error(f"Vector search failed: {e}")
         return ""
-
-async def search_memory(user_id: int, query: str, n_results: int = 3) -> str:
-    return await asyncio.to_thread(_search_memory_sync, user_id, query, n_results)

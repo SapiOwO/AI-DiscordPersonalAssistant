@@ -243,7 +243,7 @@ def apply_studio_mastering(audio_array: np.ndarray, sample_rate: int) -> np.ndar
         return audio_array
     
     audio_array = audio_array.astype(np.float32)
-    tail_duration = 2.0 
+    tail_duration = 0.0 
     tail_samples = int(tail_duration * sample_rate)
     dither_pad = np.random.normal(0, 0.00001, size=tail_samples).astype(np.float32)
     

@@ -1,4 +1,4 @@
-# Credentials
+# Credentials & Configs
 .env
 config.py
 
@@ -7,21 +7,21 @@ bot-env/
 venv/
 ENV/
 
-# Python core
+# Python Core
 __pycache__/
 *.py[cod]
 *$py.class
 *.spec
 
-# AI Audio Assets (Prevents repo bloat)
+# AI Audio Assets & Caches
 audio_models/
 temp_audio/
 assets/emotions/human_laugh.wav
-
-# AI Memory & Local Vector DB
-chroma_db/
 .cache/
 huggingface/
+
+# Legacy AI Memory (ChromaDB is deprecated but ignored to prevent accidental pushes)
+chroma_db/
 
 # Databases & Logs
 *.db

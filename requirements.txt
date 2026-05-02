@@ -1,6 +1,6 @@
 discord.py
 python-dotenv
-aiomysql
+asyncpg
 aiohttp
 httpx
 numpy
@@ -9,7 +9,6 @@ pedalboard
 faster-whisper
 kokoro
 piper-tts
-chromadb
 pillow
 
 # CUDA 12.1 Hardware Acceleration
