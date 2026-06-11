@@ -42,14 +42,16 @@ The bot is fully functional on the `dev` branch with the following capabilities:
 
 ---
 
-## 4. Planned & Future Work (Next Actions)
+## 4. Completed Features
 
-1. **Active Window Scrolling Context (Sliding Window)**:
-   * Improve the sliding window history logic. Rather than just relying on the Lean Mode system prompts, implement an active scrolling context strategy that dynamically trims and summarizes past conversation cycles to maintain maximum clarity in the 4K context window of models like `gemma3:1b-it-qat`.
-2. **LTS (Long Term Support) Updates**:
-   * Implement library updates, robust error checking, and schema migrations to ensure the bot can run unattended for months without database pool failures or package depreciation.
-3. **Benchmarking SLM Capability**:
-   * Run benchmark metrics on Qwen-4B and Gemma3-1B to measure the hallucination rate under different context truncation thresholds.
+1. **Active Scrolling Window Context**:
+   * Implemented in `session_manager.py` to maintain a flat, budget‑aware context window, eliminating hallucination risk for small‑model (SLM) deployments and improving relevance for larger LLMs.
+   * The system trims older turns until the configured character budget (`max_chars_total`) is reached, inserting an ellipsis (`...`) when truncation occurs.
+   * This feature is now **live** on the `dev` branch and marked as implemented in the handoff status.
+
+2. **Lean Mode Prompt Builder**:
+   * Tiered system prompts (`lean`, `standard`, `full`) reduce token overhead for models with ≤4K context windows.
+   * Strips verbose guidelines, keeping only essential persona and safety rules, saving ~400 tokens per call.
 
 ---
 

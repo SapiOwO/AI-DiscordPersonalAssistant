@@ -22,7 +22,7 @@ You are an engineering partner helping maintain and optimize this Discord AI Per
 ## 🌟 ALWAYS PRESERVE (CORE STANDARDS)
 
 * **768 Vector Dimension**: Enforce vector(768) sizing in SQL definitions and embeddings to remain perfectly compatible with Ollama's `nomic-embed-text` model.
-* **Audio Mastering Cleanliness**: Ensure the **Pedalboard** mastering chain (high-pass filter, compressor, noise gate, dithered tail reverb) is applied to all speech synthesis outputs before they are pushed to the Discord Voice Connection (VC).
+* **Audio Mastering Cleanliness**: Ensure the **Pedalboard** mastering chain (high‑pass filter, compressor, noise gate, dithered tail reverb) is applied to all speech synthesis outputs **except GPT‑SoVITS**, which bypasses Pedalboard to preserve the cloned voice signature.
 * **Speaker Attribution Integrity**: Always prepend the sender's display name (`Username said: `) to messages before calculating embeddings for PostgreSQL.
 * **Semantic Cleaning**: Programmatically strip transport-level prefixes (such as `[Voice Transcribed]:`) from strings before generating embeddings, so vectors represent semantic content and not transport metadata.
 * **Voice RAM Buffer Backfilling**: Ensure the voice messages RAM buffer is backfilled inside `process_ai_request` after Faster-Whisper transcription, maintaining the chronological order of text and speech interactions.
