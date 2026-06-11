@@ -1181,14 +1181,11 @@ async def start_voice_engine():
         return
 
     import sys
-    root_dir = cfg("GPT_SOVITS_ROOT", "../AI-Vtuber")
+    root_dir = cfg("GPT_SOVITS_ROOT", "./")
     
-    # Try local directory first, then fallback to configured sibling path
+    # Resolve engine path relative to configured root directory
     if engine_type == "GPT_SOVITS_CPU":
-        local_dir = os.path.abspath("./GPT-SoVITS-CPUFast")
-        sibling_dir = os.path.abspath(os.path.join(root_dir, "GPT-SoVITS-CPUFast"))
-        engine_dir = local_dir if os.path.exists(local_dir) else sibling_dir
-        
+        engine_dir = os.path.abspath(os.path.join(root_dir, "GPT-SoVITS-CPUFast"))
         logger.info(f"Launching GPT-SoVITS-CPUFast Engine from: {engine_dir}")
         if sys.platform == "win32":
             python_exe = os.path.join(engine_dir, "venv-cpu", "Scripts", "python.exe")
@@ -1196,21 +1193,49 @@ async def start_voice_engine():
             python_exe = os.path.join(engine_dir, "venv-cpu", "bin", "python")
         script_py = os.path.join(engine_dir, "api_v2.py")
     else:
-        local_dir = os.path.abspath("./GPT-SoVITS")
-        sibling_dir = os.path.abspath(os.path.join(root_dir, "GPT-SoVITS"))
-        engine_dir = local_dir if os.path.exists(local_dir) else sibling_dir
-        
+        engine_dir = os.path.abspath(os.path.join(root_dir, "GPT-SoVITS"))
         logger.info(f"Launching GPT-SoVITS-GPU Engine from: {engine_dir}")
-        python_exe = sys.executable
+        # Isolated env check
+        if sys.platform == "win32":
+            isolated_exe = os.path.join(engine_dir, "sovits-gpu-env", "Scripts", "python.exe")
+        else:
+            isolated_exe = os.path.join(engine_dir, "sovits-gpu-env", "bin", "python")
+            
+        if os.path.exists(isolated_exe):
+            logger.info(f"Using isolated GPU environment: {isolated_exe}")
+            python_exe = isolated_exe
+        else:
+            logger.info(f"Isolated environment not found, falling back to main environment: {sys.executable}")
+            python_exe = sys.executable
+            
         script_py = os.path.join(engine_dir, "api_v2.py")
 
     if not os.path.exists(python_exe):
         logger.error(f"Voice Engine python executable missing: {python_exe}")
         return
 
+    # Update tts_infer.yaml custom.is_half parameter dynamically (only for GPU engine)
+    yaml_path = os.path.join(engine_dir, "GPT_SoVITS", "configs", "tts_infer.yaml")
+    if engine_type == "GPT_SOVITS_GPU" and os.path.exists(yaml_path):
+        try:
+            import yaml
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                yaml_data = yaml.load(f, Loader=yaml.FullLoader)
+            
+            is_half_val = cfg("GPT_SOVITS_GPU_IS_HALF", True)
+            if yaml_data and "custom" in yaml_data:
+                yaml_data["custom"]["is_half"] = is_half_val
+                with open(yaml_path, "w", encoding="utf-8") as f:
+                    yaml.dump(yaml_data, f)
+                logger.info(f"Dynamically updated custom.is_half to {is_half_val} in tts_infer.yaml")
+        except Exception as e:
+            logger.error(f"Failed to dynamically update tts_infer.yaml: {e}")
+
     current_env = os.environ.copy()
     current_env["locale"] = "en_US"
     current_env["PYTHONIOENCODING"] = "utf-8"
+    current_env["TORCHAUDIO_BACKEND"] = "soundfile"
+    current_env["CUDA_VISIBLE_DEVICES"] = "0"
 
     try:
         sovits_port = str(cfg("GPT_SOVITS_PORT", 9880))

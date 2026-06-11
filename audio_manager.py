@@ -70,6 +70,27 @@ def _coerce_audio_array(base_audio) -> np.ndarray:
 
     return np.asarray(base_audio, dtype=np.float32)
 
+def _to_mono_float32(data):
+    data = _coerce_audio_array(data)
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    return data
+
+def _resample_audio(data, src_sr, dst_sr):
+    if src_sr == dst_sr:
+        return _to_mono_float32(data)
+    try:
+        import scipy.signal
+        data = _to_mono_float32(data)
+        resampled = scipy.signal.resample_poly(data, dst_sr, src_sr)
+        return resampled.astype(np.float32)
+    except Exception as e:
+        logger.warning(f"scipy resampling failed ({e}), falling back to linear interpolation.")
+        data = _to_mono_float32(data)
+        duration = len(data) / src_sr
+        new_len = int(duration * dst_sr)
+        return np.interp(np.linspace(0, len(data), new_len), np.arange(len(data)), data).astype(np.float32)
+
 def _ensure_dirs():
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -208,7 +229,6 @@ def preprocess_text_for_tts(text: str):
     for pattern, replacement in abbreviations.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
-    text = re.sub(r'\b(and|but|so|because)\b', r',\1', text, flags=re.IGNORECASE)
     text = text.replace("...", "... ").replace(",,", ",").replace(" ,", ",")
     text = text.replace("—", ", ")
 
@@ -302,12 +322,7 @@ async def synthesize(text: str) -> bytes:
 
     audio_chunks = []
     used_gpt_sovits = False
-    if engine == "gpt_sovits":
-        global_sr = 32000
-    elif engine == "kokoro":
-        global_sr = 24000
-    else:
-        global_sr = 22050
+    target_sr = 48000
 
     try:
         for kind, content in segments:
@@ -316,10 +331,11 @@ async def synthesize(text: str) -> bytes:
             if kind == 'text':
                 if engine == "gpt_sovits":
                     import io
+                    ref_wav = getattr(config, "REFER_WAV_PATH", "")
                     payload = {
                         "text": content,
                         "text_lang": "en",
-                        "ref_audio_path": getattr(config, "REFER_WAV_PATH", ""),
+                        "ref_audio_path": os.path.abspath(ref_wav) if ref_wav else "",
                         "prompt_text": getattr(config, "REFER_PROMPT_TEXT", ""),
                         "prompt_lang": getattr(config, "REFER_PROMPT_LANG", "en")
                     }
@@ -327,13 +343,14 @@ async def synthesize(text: str) -> bytes:
                     success = False
                     try:
                         async with aiohttp.ClientSession() as session:
-                            async with session.post(target_url, json=payload, timeout=10.0) as resp:
+                            async with session.post(target_url, json=payload, timeout=60.0) as resp:
                                 if resp.status == 200:
                                     audio_bytes = await resp.read()
                                     if sf is not None:
                                         with io.BytesIO(audio_bytes) as bio:
                                             data, sr = sf.read(bio)
-                                            audio_chunks.append(data)
+                                            resampled = _resample_audio(data, sr, target_sr)
+                                            audio_chunks.append(resampled)
                                             success = True
                                             used_gpt_sovits = True
                                 else:
@@ -349,7 +366,7 @@ async def synthesize(text: str) -> bytes:
                             generator = kokoro_pipeline(content, voice=voice_id, speed=1.0, split_pattern=r'\n+')
                             for _, _, audio in generator:
                                 if audio is not None:
-                                    resampled = np.interp(np.linspace(0, len(audio), int(len(audio) * 32000 / 24000)), np.arange(len(audio)), audio)
+                                    resampled = _resample_audio(audio, 24000, target_sr)
                                     audio_chunks.append(resampled)
                         elif piper_voice is not None:
                             temp_dir_batch = os.path.join(TEMP_DIR, f"batch_{uuid.uuid4().hex}")
@@ -367,7 +384,7 @@ async def synthesize(text: str) -> bytes:
                                     piper_voice.synthesize_wav(sentence, wav_file, syn_config=syn_config)
                                 if sf is not None:
                                     data, sr = sf.read(seg_path)
-                                    resampled = np.interp(np.linspace(0, len(data), int(len(data) * 32000 / 22050)), np.arange(len(data)), data)
+                                    resampled = _resample_audio(data, 22050, target_sr)
                                     audio_chunks.append(resampled)
                                 os.remove(seg_path)
                             os.rmdir(temp_dir_batch)
@@ -376,7 +393,8 @@ async def synthesize(text: str) -> bytes:
                     voice_id = getattr(config, "TTS_VOICE_KOKORO", "af_heart")
                     generator = kokoro_pipeline(content, voice=voice_id, speed=1.0, split_pattern=r'\n+')
                     for _, _, audio in generator:
-                        audio_chunks.append(audio)
+                        resampled = _resample_audio(audio, 24000, target_sr)
+                        audio_chunks.append(resampled)
                 
                 elif engine == "piper":
                     temp_dir_batch = os.path.join(TEMP_DIR, f"batch_{uuid.uuid4().hex}")
@@ -402,7 +420,8 @@ async def synthesize(text: str) -> bytes:
                         
                         if sf is not None:
                             data, sr = sf.read(seg_path)
-                            audio_chunks.append(data)
+                            resampled = _resample_audio(data, 22050, target_sr)
+                            audio_chunks.append(resampled)
                         os.remove(seg_path)
                     os.rmdir(temp_dir_batch)
 
@@ -410,23 +429,25 @@ async def synthesize(text: str) -> bytes:
                 if content == 'laugh':
                     if engine == "gpt_sovits":
                         import io
+                        ref_wav = getattr(config, "REFER_WAV_PATH", "")
                         payload = {
                             "text": "hahaha...",
                             "text_lang": "en",
-                            "ref_audio_path": getattr(config, "REFER_WAV_PATH", ""),
+                            "ref_audio_path": os.path.abspath(ref_wav) if ref_wav else "",
                             "prompt_text": getattr(config, "REFER_PROMPT_TEXT", ""),
                             "prompt_lang": getattr(config, "REFER_PROMPT_LANG", "en")
                         }
                         target_url = f"http://127.0.0.1:{getattr(config, 'GPT_SOVITS_PORT', 9880)}/tts"
                         try:
                             async with aiohttp.ClientSession() as session:
-                                async with session.post(target_url, json=payload, timeout=10.0) as resp:
+                                async with session.post(target_url, json=payload, timeout=60.0) as resp:
                                     if resp.status == 200:
                                         audio_bytes = await resp.read()
                                         if sf is not None:
                                             with io.BytesIO(audio_bytes) as bio:
-                                                data, _ = sf.read(bio)
-                                                audio_chunks.append(data)
+                                                data, sr = sf.read(bio)
+                                                resampled = _resample_audio(data, sr, target_sr)
+                                                audio_chunks.append(resampled)
                                                 used_gpt_sovits = True
                                     else:
                                         logger.error(f"GPT-SoVITS laugh tag failed with status {resp.status}")
@@ -436,32 +457,32 @@ async def synthesize(text: str) -> bytes:
                         laugh_path = os.path.join(ASSETS_DIR, "human_laugh.wav")
                         if sf is not None and os.path.exists(laugh_path):
                             data, sr = sf.read(laugh_path)
-                            if sr != global_sr and len(data) > 0:
-                                data = np.interp(np.linspace(0, len(data), int(len(data) * global_sr / sr)), np.arange(len(data)), data)
-                            if data.ndim > 1: data = data.mean(axis=1) 
-                            audio_chunks.append(data)
+                            resampled = _resample_audio(data, sr, target_sr)
+                            audio_chunks.append(resampled)
                         
                 elif content in ['hmm', 'hum:up']:
                     if engine == "gpt_sovits":
                         import io
+                        ref_wav = getattr(config, "REFER_WAV_PATH", "")
                         payload = {
                             "text": "mmm",
                             "text_lang": "en",
-                            "ref_audio_path": getattr(config, "REFER_WAV_PATH", ""),
+                            "ref_audio_path": os.path.abspath(ref_wav) if ref_wav else "",
                             "prompt_text": getattr(config, "REFER_PROMPT_TEXT", ""),
                             "prompt_lang": getattr(config, "REFER_PROMPT_LANG", "en")
                         }
                         target_url = f"http://127.0.0.1:{getattr(config, 'GPT_SOVITS_PORT', 9880)}/tts"
                         try:
                             async with aiohttp.ClientSession() as session:
-                                async with session.post(target_url, json=payload, timeout=30.0) as resp:
+                                async with session.post(target_url, json=payload, timeout=60.0) as resp:
                                     if resp.status == 200:
                                         audio_bytes = await resp.read()
                                         if sf is not None:
                                             with io.BytesIO(audio_bytes) as bio:
-                                                data, _ = sf.read(bio)
+                                                data, sr = sf.read(bio)
+                                                resampled = _resample_audio(data, sr, target_sr)
                                                 pattern = "thinking" if content == 'hmm' else "scale_up"
-                                                hummed = generate_musical_hum(data, global_sr, pattern)
+                                                hummed = generate_musical_hum(resampled, target_sr, pattern)
                                                 audio_chunks.append(hummed)
                                                 used_gpt_sovits = True
                         except Exception as e:
@@ -471,7 +492,8 @@ async def synthesize(text: str) -> bytes:
                         generator = kokoro_pipeline("mmm", voice=voice_id, speed=0.8)
                         pattern = "thinking" if content == 'hmm' else "scale_up"
                         for _, _, audio in generator:
-                            hummed = generate_musical_hum(audio, global_sr, pattern)
+                            resampled = _resample_audio(audio, 24000, target_sr)
+                            hummed = generate_musical_hum(resampled, target_sr, pattern)
                             audio_chunks.append(hummed)
                     elif engine == "piper":
                         temp_hum = os.path.join(TEMP_DIR, f"hum_{uuid.uuid4().hex}.wav")
@@ -484,8 +506,9 @@ async def synthesize(text: str) -> bytes:
                             
                         if sf is not None:
                             data, _ = sf.read(temp_hum)
+                            resampled = _resample_audio(data, 22050, target_sr)
                             pattern = "thinking" if content == 'hmm' else "scale_up"
-                            hummed = generate_musical_hum(data, global_sr, pattern)
+                            hummed = generate_musical_hum(resampled, target_sr, pattern)
                             audio_chunks.append(hummed)
                         os.remove(temp_hum)
 
@@ -496,15 +519,11 @@ async def synthesize(text: str) -> bytes:
         combined_mono_audio = np.concatenate(audio_chunks).astype(np.float32)
         
         if sf is not None and Pedalboard is not None and not used_gpt_sovits:
-            final_stereo_audio = apply_studio_mastering(combined_mono_audio, global_sr)
-            sf.write(temp_combined_wav, final_stereo_audio.T, global_sr)
+            final_stereo_audio = apply_studio_mastering(combined_mono_audio, target_sr)
+            sf.write(temp_combined_wav, final_stereo_audio.T, target_sr)
         else:
             if sf is not None:
-                if combined_mono_audio.ndim == 1:
-                    stereo_audio = np.vstack((combined_mono_audio, combined_mono_audio))
-                else:
-                    stereo_audio = combined_mono_audio
-                sf.write(temp_combined_wav, stereo_audio.T, global_sr)
+                sf.write(temp_combined_wav, combined_mono_audio, target_sr)
 
         if not os.path.exists(temp_combined_wav) or os.path.getsize(temp_combined_wav) == 0:
             logger.error("TTS: WAV file creation failed or file is empty before FFmpeg.")

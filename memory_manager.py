@@ -13,10 +13,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import db
+import config
 
 logger = logging.getLogger("memory_manager")
 
-EMBEDDING_MODEL = "nomic-embed-text-v1.5"
+EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
 EMBEDDING_DIM = 768
 
 # Thread pool for CPU-based embedding inference (doesn't block async)
@@ -28,10 +29,16 @@ def _get_embedding_model():
     """Lazy-load the embedding model on first use."""
     global _embedding_model
     if _embedding_model is None:
+        engine = getattr(config, "EMBEDDING_ENGINE", "ollama").lower()
+        if engine == "ollama":
+            logger.info("Using Ollama-based embeddings (nomic-embed-text).")
+            _embedding_model = False  # Flag to use Ollama
+            return _embedding_model
+
         try:
             from sentence_transformers import SentenceTransformer
             logger.info(f"Loading {EMBEDDING_MODEL} (CPU-based, no GPU competition)...")
-            _embedding_model = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
+            _embedding_model = SentenceTransformer(EMBEDDING_MODEL, device="cpu", trust_remote_code=True)
             logger.info(f"Embedding model loaded. Dimension: {EMBEDDING_DIM}")
         except Exception as e:
             logger.error(f"Failed to load sentence-transformers: {e}. Falling back to Ollama.")

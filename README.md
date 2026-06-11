@@ -5,7 +5,7 @@ An elite, Discord assistant powered by **Ollama** for local AI inference. This a
 Optimized for both high-end rigs and "potato PCs", it allows small models (like Qwen-4B) to perform complex tasks without hallucinations.
 
 ### 🕒 Latest Updates
-* **June 11, 2026**: **Unified Audio Pipeline & Local Environment Rework**. Integrated GPT-SoVITS CPU/GPU engines with smart local/sibling pathing (`venv-cpu` for CPU and shared `venv` for GPU). Implemented Pedalboard mastering bypass for GPT-SoVITS cloned voices to prevent reverb/compressor signal distortion. Updated database/library dependencies and streamlined auto-hardware acceleration logic.
+* **June 11, 2026**: **Unified Audio Pipeline, 48kHz Resampling & Local Memory Rework**. Standardized all audio output engines (Kokoro, Piper, and GPT-SoVITS CPU/GPU) to resample to a strict **48kHz** target matching Discord's Opus codec, fixing the deep voice/slow playback pitch mismatch bug. Integrated GPT-SoVITS CPU/GPU engines with environment isolation (`venv-cpu` for CPU and shared `venv` for GPU) and dynamic precision (`is_half` / FP16) configuration. Switched memory embeddings to default to local Ollama (`nomic-embed-text`) to eliminate external HuggingFace 401 connection warnings. Bypassed Pedalboard mastering on cloned voices to prevent reverb/compressor signal distortion.
 * **May 02, 2026**: **The Grand Architecture Rework**. Migrated entirely from MySQL + ChromaDB to a unified **PostgreSQL + pgvector** database. Introduced **"Lean Mode"** context feeding and Anti-Hallucination truncation to make small LLMs (<4B) incredibly stable and focused. Voice messages are now normalized in the RAG pipeline with proper speaker attribution.
 * **April 20, 2026**: Integrated **Kokoro-82M** for studio-grade TTS. Added **Dithered Tail Recovery** and **Audiophile Mastering** via Pedalboard. 
 * **April 13, 2026**: Implemented **Faster-Whisper** for local STT.
@@ -98,10 +98,14 @@ If you want to enable premium voice-cloning with **GPT-SoVITS**:
 > **How the Environments Work:**
 > - **CPU Mode (`GPT_SOVITS_CPU`)**: If you're installing the CPUFast version, navigate to `./GPT-SoVITS-CPUFast`, create `venv-cpu` there, and install its requirements. It requires its own isolated space to avoid CUDA conflicts.
 > - **GPU Mode (`GPT_SOVITS_GPU`)**: If you're using the default GPU version, you **only need 1 virtual environment** (the main bot's `venv`) and can install its requirements directly into this environment.
+>
+> [!WARNING]
+> **Windows FFmpeg Dependency for GPU V4 Mode:**
+> If you run the GPU version of GPT-SoVITS (especially V4 or newer) on Windows, you must ensure that **FFmpeg Shared Version** (the "full-shared" release containing `.dll` files like `avcodec.dll`) is installed and added to your system's environmental `PATH` variables. Otherwise, the PyTorch audio backend (`torchcodec`) will fail to initialize, throwing a DLL loading error.
 
 1. **Place the Engine Repository**:
-   * **Local Setup (Recommended)**: Place the engine folder directly into the bot's root folder as `./GPT-SoVITS-CPUFast` (CPU mode) or `./GPT-SoVITS` (GPU mode). *Note: These folders are ignored in `.gitignore`.*
-   * **Sibling Setup**: Or place it in a sibling directory (e.g., `../AI-Vtuber/GPT-SoVITS-CPUFast`).
+   * **Local Setup**: Place the engine folder directly into the bot's root folder as `./GPT-SoVITS-CPUFast` (CPU mode) or `./GPT-SoVITS` (GPU mode). *Note: These folders are ignored in `.gitignore`.*
+   * **External Setup**: Or place it in a sibling directory (e.g., `../GPT-SoVITS-CPUFast`) and update `GPT_SOVITS_ROOT` in `config.py` accordingly.
 
 2. **Setup the Virtual Environment**:
    * **CPU Mode (`GPT_SOVITS_CPU`)**: Create and install `venv-cpu` inside the CPU engine directory. Since PyTorch is not included in the source CPUFast requirements, we install it manually:
