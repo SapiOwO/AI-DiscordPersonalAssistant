@@ -8,6 +8,9 @@ This document presents a technical case study detailing the memory architecture 
 
 Early iterations of the Discord AI assistant suffered from **Attention Dilution**, high response latencies, and frequent hallucinations when using Small Language Models (SLMs) such as Qwen-4B or `gemma3:1b-it-qat`. 
 
+> [!IMPORTANT]
+> A 4K context window is not small if the system is disciplined, but it becomes extremely fragile when history, RAG, tool outputs, metadata, and multimodal context are allowed to grow without strict backend-enforced budgets. The primary bottleneck was not the model size alone, but uncontrolled context allocation.
+
 The primary cause was **Context Bloat**:
 * Feeding raw channel names, channel biographies, user display names, absolute timestamps, and server metadata blindly on every query.
 * Packing standard conversation history (e.g. 24 turns of 520 characters each) blindly into the prompt, consuming up to ~3,100 tokens out of a maximum 4,096 tokens.
@@ -144,6 +147,19 @@ We resolved model drowning by moving away from relying on "model intelligence" a
 4. **Hard-Capped Tool Budgets**: Restricts vision scale (480p/720p) and web search results (3 snippets of 280 chars) to prevent context hijacking.
 5. **Lean Mode Prompt Tiering**: Strips non-essential instructions, saving up to ~400 tokens per prompt.
 
+#### 🎛️ Policy Extension: Lightweight Dynamic RAG Gate
+To prevent RAG operations from polluting the prompt on low-value/casual chats while avoiding total memory blindness on complex queries, we introduced a tiered **Lightweight Retrieval Policy** designed specifically for consumer-grade systems:
+
+* **Dynamic RAG Gate Premise**: Context discipline does not mean starving the model. The system must retrieve enough evidence to answer safely, while enforcing strict budgets so retrieved data does not overwhelm the active prompt.
+* **Absent Memory Guardrail**: When no long-term memory is retrieved, the model is explicitly informed that memory is absent for the current turn via an injected instruction:
+  > *"No long-term memory was retrieved for this turn. Do not claim to remember prior details unless they are present in the active context."*
+  This safety layer strips the model's ability to falsely claim continuity or invent prior details, forcing it to ask the user for clarification when historical facts are missing.
+
+* **Tiered Retrieval Budgets**:
+  * **`RAG_NONE`**: Used only for low-value casual messages, acknowledgments, or single-word inputs (e.g., `ok`, `wkwk`, `lol`). Skip database retrieval entirely.
+  * **`RAG_LIGHT`**: Default fallback for ambiguous continuity, project references, code/debug context, or meaningful follow-up messages (allocates **1 result**, max **500 characters**).
+  * **`RAG_FULL`**: Triggered by explicit multilingual memory, temporal, project, or prior-discussion cues (allocates **2-3 results**, max **1400 characters**).
+
 ---
 
 ## 💡 6. Vision & Core Engineering Philosophy: The Consumer Edge
@@ -163,5 +179,31 @@ Large, slow 30B LLM models      -->   Fast, focused 1B - 4B SLM models
 ```
 
 This case study proves that with disciplined context orchestration, clean database consolidation, and strict token economy, small local models running on standard consumer machines can act with the speed, accuracy, and intelligence of large-scale systems.
+
+---
+
+## 🛠️ 7. Deep-Dive: Design Decisions & Architectural Trade-offs
+
+During the planning and optimization pass for the **Lightweight Dynamic RAG Gate** and **Memory Honesty Protocol**, several crucial micro-decisions and edge cases were analyzed and solved.
+
+### A. The Multilingual Query Edge Case
+* **The Problem**: Relying strictly on a hardcoded list of Indonesian memory keywords (`ingat`, `kemarin`, `dulu`) works well for local chats, but instantly breaks the retrieval pipeline when users chat in English (`remember`, `yesterday`), Japanese (`覚えてる`, `昨日`), or Dutch (`herinner`, `gisteren`).
+* **The Trade-off**: Writing static dictionary translation lists for dozens of languages is a maintenance nightmare. Meanwhile, using a local LLM-based intent classifier to detect memory intent on every turn is too heavy for an RTX 2060 6GB GPU, adding VRAM pressure and latency.
+* **The Solution**: We implemented a **Hybrid Punctuation-Normalized Keyword Gate**:
+  * Normalize incoming messages by stripping punctuation first (e.g. `halo!` becomes `halo`) before matching against `CASUAL_UTTERANCES`. This prevents short casual remarks with punctuation from erroneously triggering memory searches.
+  * Define a compact, multilingual core list of memory cues (ID, EN, JP).
+  * Use **RAG_LIGHT** (1 result, 500 characters max) as a safe fallback for ambiguous or longer inputs that do not match explicit cues but might imply continuity (e.g., *"lanjut yang tadi"*, *"previous bug?"*). This guarantees the model never goes completely blind on foreign languages, while keeping token consumption low.
+
+### B. Epistemic Memory Status (Honesty Warnings)
+* **The Logic**: Why separate the system prompt warning between `RAG_NONE` and `RAG_LIGHT`/`RAG_FULL` empty returns?
+* **The Reason**:
+  * If the RAG mode is `none` (e.g., casual greeting like *"halo"*), memory search was deliberately skipped. Injected Warning: `No long-term memory was retrieved for this turn.` (In Lean Mode, we keep this to a single sentence: `No long-term memory was retrieved. Do not claim prior memory unless shown in context.` to save precious token overhead).
+  * If the RAG mode was `light` or `full` but the search yielded no database rows, it means the database was queried but no semantically relevant records were found. Injected Warning: `A long-term memory search was attempted, but no relevant memory was found. Do not invent prior details.`
+* **The Benefit**: By informing the model *why* there is no memory in its active context, we prevent it from guessing or generating false continuity statements (*"Oh yes, I remember that..."*). Instead, the model acts honestly and asks the user for clarification.
+
+### C. Regex Audio Pre-processing Order
+* **The Bug**: Stripping markdown brackets (`[` and `]`) early in the preprocessing chain destroyed the TTS tag engine (e.g., `[laugh]` or `[hmm]` became `laugh` or `hmm` and were spoken verbally by the TTS instead of triggering raw audio assets or musical hums).
+* **The Fix**: The text is first split by brackets `(\[[a-zA-Z0-9:_\-]+\])` to isolate structural audio tags. Once isolated, the markdown stripping regex (`[*_~`#>\\]`) and list-item bullets strip (`(?m)^[ \t]*[-*•][ \t]+`) are executed **only on normal text chunks**. Inner hyphens (like `RTX-2060` or `GPT-SoVITS`) are preserved to maintain natural speech pacing.
+
 
 

@@ -213,7 +213,7 @@ async def transcribe(audio_bytes: bytes) -> str:
         if os.path.exists(temp_wav): os.remove(temp_wav)
 
 def preprocess_text_for_tts(text: str):
-    text = re.sub(r'[*_~`"\']', '', text)
+    text = text.replace('"', '').replace("'", "")
 
     abbreviations = {
         r"\blol\b": "haha",
@@ -232,7 +232,8 @@ def preprocess_text_for_tts(text: str):
     text = text.replace("...", "... ").replace(",,", ",").replace(" ,", ",")
     text = text.replace("—", ", ")
 
-    parts = re.split(r'(\[[a-zA-Z0-9:]+\])', text)
+    # We use dynamic tag split (supports letters, numbers, colons, underscores, hyphens)
+    parts = re.split(r'(\[[a-zA-Z0-9:_\-]+\])', text)
     processed_parts = []
     
     for part in parts:
@@ -241,7 +242,13 @@ def preprocess_text_for_tts(text: str):
         if part.startswith('[') and part.endswith(']'):
             processed_parts.append(('tag', part.strip('[]').lower()))
         else:
-            processed_parts.append(('text', part.strip()))
+            # Clean markdown symbols only for normal text segments
+            # Keeps inner hyphens like RTX-2060, but strips beginning list dashes
+            cleaned = re.sub(r'(?m)^[ \t]*[-*•][ \t]+', '', part)
+            cleaned = re.sub(r'[*_~`#>\\]', '', cleaned)
+            cleaned = cleaned.strip()
+            if cleaned:
+                processed_parts.append(('text', cleaned))
             
     return processed_parts
 

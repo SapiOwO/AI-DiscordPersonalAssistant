@@ -53,6 +53,11 @@ The bot is fully functional on the `dev` branch with the following capabilities:
    * Tiered system prompts (`lean`, `standard`, `full`) reduce token overhead for models with ≤4K context windows.
    * Strips verbose guidelines, keeping only essential persona and safety rules, saving ~400 tokens per call.
 
+3. **Dynamic RAG Gate & Memory Honesty Protocol**:
+   * Evaluates incoming messages using `rag_policy.py` to determine RAG depth: `RAG_NONE` for casual chatter, `RAG_LIGHT` (1 result) for follow-up ambiguity, and `RAG_FULL` (3 results) for explicit memory/project cues.
+   * Leverages an **Absent Memory Guardrail** that injects strict prompts (e.g. *"No long-term memory was retrieved..."*) when memories are missing, preventing the model from hallucinating false historical contexts.
+
+
 ---
 
 ## 5. Non-Negotiable Rules for the Next AI
