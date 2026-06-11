@@ -117,11 +117,12 @@ If you want to enable premium voice-cloning with **GPT-SoVITS**:
      pip install -r requirements.txt
      cd ..
      ```
-   * **GPU Mode (`GPT_SOVITS_GPU`)**: Shares the main `venv` environment (since PyTorch CUDA is already installed there). No separate `venv-gpu` is needed! Just install the engine requirements directly inside the bot's active `venv`:
+   * **GPU Mode (`GPT_SOVITS_GPU`)**: Can share the main `venv` environment for storage efficiency (since PyTorch CUDA is already installed there). No separate `venv-gpu` is required! Just install the engine requirements directly inside the bot's active `venv`:
      ```powershell
      # Ensure your main bot venv is active, then run:
      pip install -r GPT-SoVITS/requirements.txt
      ```
+     *Note: Advanced users can optionally configure and run the engine using an isolated `sovits-gpu-env` if strict dependency separation is preferred.*
 
 3. **Configure Settings**:
    * Open `config.py` and set:

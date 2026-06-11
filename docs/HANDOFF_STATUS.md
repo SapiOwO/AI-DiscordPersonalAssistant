@@ -21,7 +21,7 @@ The `AI-Discord` bot is a local-first, privacy-respecting personal companion AI.
 
 The bot is fully functional on the `dev` branch with the following capabilities:
 * **Unified Memory (pgvector)**: The `vector_memories` table has been deprecated. All message history and 768-dimensional embeddings share the exact same row in the `messages` table.
-* **CPU Embedding Generation**: Embeddings are computed on the CPU using `sentence-transformers` (`nomic-embed-text-v1.5`) via a lazy-loaded thread pool in `memory_manager.py`. This prevents embedding generation from competing for GPU resources with active LLM inference. An Ollama API fallback is preserved.
+* **CPU Embedding Generation (Fallback)**: Embeddings default to local Ollama `nomic-embed-text` for zero-friction setup. SentenceTransformers CPU inference is available as an optional advanced mode via a lazy-loaded thread pool in `memory_manager.py` to prevent embedding generation from competing for GPU resources with active LLM inference.
 * **Keep-Alive Caching**: Ollama calls request a `keep_alive="30m"` configuration, keeping active models cached in memory to eliminate initial response lag.
 * **Lean Mode System Prompts**: `session_manager.py` dynamically compiles instructions based on model context limits (`lean`, `standard`, and `full` modes).
 * **Audio Mastering Chain**: `audio_manager.py` hosts a professional **Pedalboard** mastering setup (Noise Gate -> High-Pass Filter -> Compressor -> Room Reverb) for warm, natural speech.
@@ -32,13 +32,13 @@ The bot is fully functional on the `dev` branch with the following capabilities:
 
 ## 3. Core File Map
 
-* [main.py](main.py): Discord events loop, message routers, typing burst generator, and dynamic context backfill listeners.
-* [db.py](db.py): PostgreSQL pgvector connectivity, conversational logs, profile settings, and HNSW cosine similarity search queries.
-* [schema.sql](schema.sql): Table definitions, indexing, and cleanup constraints.
-* [session_manager.py](session_manager.py): Tiered prompt assembly (Lean/Standard/Full) and context window packing.
-* [memory_manager.py](memory_manager.py): Local CPU sentence-transformers vector generation and fallback handlers.
-* [audio_manager.py](audio_manager.py): Local STT (Faster-Whisper), TTS (Kokoro/Piper), and Pedalboard mastering chains.
-* [config.py](config.py): Environment settings, default persona card (Zen ChromaQ-Tπ), and features capability flags.
+* [main.py](../main.py): Discord events loop, message routers, typing burst generator, and dynamic context backfill listeners.
+* [db.py](../db.py): PostgreSQL pgvector connectivity, conversational logs, profile settings, and HNSW cosine similarity search queries.
+* [schema.sql](../schema.sql): Table definitions, indexing, and cleanup constraints.
+* [session_manager.py](../session_manager.py): Tiered prompt assembly (Lean/Standard/Full) and context window packing.
+* [memory_manager.py](../memory_manager.py): Local CPU sentence-transformers vector generation and fallback handlers.
+* [audio_manager.py](../audio_manager.py): Local STT (Faster-Whisper), TTS (Kokoro/Piper), and Pedalboard mastering chains.
+* [config.py](../config.py): Environment settings, default persona card (Zen ChromaQ-Tπ), and features capability flags.
 
 ---
 
@@ -60,5 +60,5 @@ The bot is fully functional on the `dev` branch with the following capabilities:
 * **Never Split the Database**: Do not separate chat history database and vector memory storage. They must remain unified in the `messages` table on the same row.
 * **No Hardcoded Absolute Paths or Keys**: All configuration variables, paths, and API keys must be loaded via `config.py` or `.env`. No absolute local folder paths (e.g. `C:\Users\developer\...`) may be committed.
 * **Manage Temp Files**: All audio transformations in `temp_audio/` must occur in `try...finally` blocks to guarantee file unlinking.
-* **Ensure Local CPU/GPU Separation**: Keep embedding computations on the CPU (using `sentence-transformers`) to prevent Ollama GPU starvation.
+* **Ensure Local CPU/GPU Separation**: Keep embedding computations on the CPU (using `sentence-transformers` fallback or Ollama config) to prevent active LLM GPU starvation.
 * **Update documentation**: Always record your changes and plans in `docs/UPDATE.md` and keep this handoff status current.
