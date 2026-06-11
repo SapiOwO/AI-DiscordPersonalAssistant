@@ -6,6 +6,10 @@ config.py
 bot-env/
 venv/
 ENV/
+GPT-SoVITS-CPUFast/
+GPT-SoVITS/
+voice_ref/*
+!voice_ref/README.md
 
 # Python Core
 __pycache__/

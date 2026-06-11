@@ -1,37 +1,57 @@
 """
 Unified Memory Manager — pgvector on the messages table.
 
-Embeddings are generated via Ollama's nomic-embed-text and written
-directly onto the same row in the `messages` table that holds the
-chat content.  No separate vector table is needed.
+Embeddings are generated via local sentence-transformers (nomic-embed-text on CPU).
+This runs on CPU and does NOT compete with GPU-based LLM inference.
+Embeddings are written directly onto the same row in the `messages` table.
 """
 
 import logging
 from typing import List, Optional
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import db
 
 logger = logging.getLogger("memory_manager")
 
-OLLAMA_EMBED_URL = "http://localhost:11434/api/embeddings"
-EMBEDDING_MODEL = "nomic-embed-text"
+EMBEDDING_MODEL = "nomic-embed-text-v1.5"
 EMBEDDING_DIM = 768
 
+# Thread pool for CPU-based embedding inference (doesn't block async)
+_embedding_executor = ThreadPoolExecutor(max_workers=2)
+_embedding_model = None
 
-# ─────────────────────────────────────────────
-#  Embedding generation
-# ─────────────────────────────────────────────
 
-async def get_embedding(text: str) -> List[float]:
-    """Request a 768-dim embedding from Ollama nomic-embed-text."""
+def _get_embedding_model():
+    """Lazy-load the embedding model on first use."""
+    global _embedding_model
+    if _embedding_model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            logger.info(f"Loading {EMBEDDING_MODEL} (CPU-based, no GPU competition)...")
+            _embedding_model = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
+            logger.info(f"Embedding model loaded. Dimension: {EMBEDDING_DIM}")
+        except Exception as e:
+            logger.error(f"Failed to load sentence-transformers: {e}. Falling back to Ollama.")
+            _embedding_model = False  # Flag to use Ollama fallback
+    return _embedding_model
+
+
+async def _get_embedding_ollama_fallback(text: str) -> List[float]:
+    """Fallback to Ollama if sentence-transformers is not available."""
     if not text or not text.strip():
         return []
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                OLLAMA_EMBED_URL,
-                json={"model": EMBEDDING_MODEL, "prompt": text[:2000]},
+                "http://localhost:11434/api/embeddings",
+                json={
+                    "model": "nomic-embed-text",
+                    "prompt": text[:2000],
+                    "keep_alive": "30m"
+                },
                 timeout=15.0,
             )
             if resp.status_code == 200:
@@ -43,8 +63,44 @@ async def get_embedding(text: str) -> List[float]:
             logger.warning(f"Ollama embedding HTTP {resp.status_code}: {resp.text[:200]}")
             return []
     except Exception as e:
-        logger.error(f"Embedding request failed: {e}")
+        logger.error(f"Ollama embedding fallback failed: {e}")
         return []
+
+
+# ─────────────────────────────────────────────
+#  Embedding generation
+# ─────────────────────────────────────────────
+
+async def get_embedding(text: str) -> List[float]:
+    """Request a 768-dim embedding from local nomic-embed-text model (CPU, no GPU).
+    
+    Falls back to Ollama if sentence-transformers is not installed.
+    """
+    if not text or not text.strip():
+        return []
+    
+    model = _get_embedding_model()
+    
+    # Use Ollama fallback if model failed to load
+    if model is False:
+        return await _get_embedding_ollama_fallback(text)
+    
+    try:
+        # Run CPU embedding in thread pool to avoid blocking async loop
+        loop = asyncio.get_event_loop()
+        embedding = await loop.run_in_executor(
+            _embedding_executor,
+            lambda: model.encode(text[:2000], convert_to_numpy=True).tolist()
+        )
+        
+        if len(embedding) == EMBEDDING_DIM:
+            return embedding
+        else:
+            logger.warning(f"Embedding dimension mismatch: got {len(embedding)}, expected {EMBEDDING_DIM}")
+            return []
+    except Exception as e:
+        logger.error(f"Local embedding failed: {e}. Trying Ollama fallback...")
+        return await _get_embedding_ollama_fallback(text)
 
 
 # ─────────────────────────────────────────────

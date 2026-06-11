@@ -5,6 +5,7 @@ An elite, Discord assistant powered by **Ollama** for local AI inference. This a
 Optimized for both high-end rigs and "potato PCs", it allows small models (like Qwen-4B) to perform complex tasks without hallucinations.
 
 ### 🕒 Latest Updates
+* **June 11, 2026**: **Unified Audio Pipeline & Local Environment Rework**. Integrated GPT-SoVITS CPU/GPU engines with smart local/sibling pathing (`venv-cpu` for CPU and shared `venv` for GPU). Implemented Pedalboard mastering bypass for GPT-SoVITS cloned voices to prevent reverb/compressor signal distortion. Updated database/library dependencies and streamlined auto-hardware acceleration logic.
 * **May 02, 2026**: **The Grand Architecture Rework**. Migrated entirely from MySQL + ChromaDB to a unified **PostgreSQL + pgvector** database. Introduced **"Lean Mode"** context feeding and Anti-Hallucination truncation to make small LLMs (<4B) incredibly stable and focused. Voice messages are now normalized in the RAG pipeline with proper speaker attribution.
 * **April 20, 2026**: Integrated **Kokoro-82M** for studio-grade TTS. Added **Dithered Tail Recovery** and **Audiophile Mastering** via Pedalboard. 
 * **April 13, 2026**: Implemented **Faster-Whisper** for local STT.
@@ -42,7 +43,7 @@ The AI features local "ears" and a "voice," running entirely on your CPU/GPU to 
 
 ## 🛠 Prerequisites
 
-* **Python 3.12** (Strictly recommended for stability)
+* **Python 3.10 or 3.11** (Strictly recommended for stability and dependency compatibility)
 * **Ollama** (Recommended: `qwen3-vl:4b-instruct` or `gemma:4b` for LLM, and `nomic-embed-text` for embeddings)
 * **PostgreSQL 15+** (Must have the `pgvector` extension installed/enabled)
 * **FFmpeg** (Required for audio processing)
@@ -53,18 +54,18 @@ The AI features local "ears" and a "voice," running entirely on your CPU/GPU to 
 
 1.  **Clone the Repository**
     ```sh
-    git clone [https://github.com/SapiOwO/Discord-AI-Personal-Assistant.git](https://github.com/SapiOwO/Discord-AI-Personal-Assistant.git)
+    git clone https://github.com/SapiOwO/Discord-AI-Personal-Assistant.git
     cd Discord-AI-Personal-Assistant
     ```
 
 2.  **Environment Setup**
-    Create a virtual environment using Python 3.12:
+    Create a virtual environment using Python 3.10 or 3.11:
     ```sh
-    py -3.12 -m venv bot-env
+    py -3.10 -m venv venv
     # Windows:
-    bot-env\Scripts\activate
+    .\venv\Scripts\activate
     # Linux/Mac:
-    source bot-env/bin/activate
+    source venv/bin/activate
     ```
 
 3.  **Install Dependencies**
@@ -87,6 +88,39 @@ The AI features local "ears" and a "voice," running entirely on your CPU/GPU to 
     ```sh
     python main.py
     ```
+
+### 🔊 Optional: GPT-SoVITS Voice Cloning Setup
+If you want to enable premium voice-cloning with **GPT-SoVITS**:
+
+> [!NOTE]
+> **How the Environments Work:**
+> - **CPU Mode (`GPT_SOVITS_CPU`)**: If you're installing the CPUFast version, navigate to `./GPT-SoVITS-CPUFast`, create `venv-cpu` there, and install its requirements. It requires its own isolated space to avoid CUDA conflicts.
+> - **GPU Mode (`GPT_SOVITS_GPU`)**: If you're using the default GPU version, you **only need 1 virtual environment** (the main bot's `venv`) and can install its requirements directly into this environment.
+
+1. **Place the Engine Repository**:
+   * **Local Setup (Recommended)**: Place the engine folder directly into the bot's root folder as `./GPT-SoVITS-CPUFast` (CPU mode) or `./GPT-SoVITS` (GPU mode). *Note: These folders are ignored in `.gitignore`.*
+   * **Sibling Setup**: Or place it in a sibling directory (e.g., `../AI-Vtuber/GPT-SoVITS-CPUFast`).
+
+2. **Setup the Virtual Environment**:
+   * **CPU Mode (`GPT_SOVITS_CPU`)**: Create and install `venv-cpu` inside the CPU engine directory:
+     ```powershell
+     cd GPT-SoVITS-CPUFast
+     python -m venv venv-cpu
+     .\venv-cpu\Scripts\Activate.ps1
+     pip install -r requirements.txt
+     cd ..
+     ```
+   * **GPU Mode (`GPT_SOVITS_GPU`)**: Shares the main `venv` environment (since PyTorch CUDA is already installed there). No separate `venv-gpu` is needed! Just install the engine requirements directly inside the bot's active `venv`:
+     ```powershell
+     # Ensure your main bot venv is active, then run:
+     pip install -r GPT-SoVITS/requirements.txt
+     ```
+
+3. **Configure Settings**:
+   * Open `config.py` and set:
+     * `TTS_ENGINE = "gpt_sovits_cpu"` or `"gpt_sovits_gpu"`.
+     * `GPT_SOVITS_ROOT = "./"` (or the directory containing your GPT-SoVITS installation).
+     * `REFER_WAV_PATH` to point to your reference `.wav` file inside `./voice_ref/`.
 
 ---
 

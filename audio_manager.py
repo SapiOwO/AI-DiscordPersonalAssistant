@@ -90,8 +90,16 @@ async def init_models():
     global whisper_model, piper_voice, kokoro_pipeline
     _ensure_dirs()
 
-    device_setting = getattr(config, "TTS_DEVICE", "cpu").lower()
-    use_cuda = (device_setting == "cuda")
+    # Auto-detect CUDA availability for Kokoro/Piper
+    import sys
+    has_cuda = False
+    try:
+        import torch
+        has_cuda = torch.cuda.is_available()
+    except ImportError:
+        pass
+    device_setting = "cuda" if has_cuda else "cpu"
+    use_cuda = has_cuda
 
     if WhisperModel:
         logger.info("Initializing Faster-Whisper (STT) on CPU...")
@@ -272,6 +280,8 @@ async def synthesize(text: str) -> bytes:
         return None
         
     engine = getattr(config, "TTS_ENGINE", "kokoro").lower()
+    if "gpt_sovits" in engine:
+        engine = "gpt_sovits"
     
     if engine == "kokoro" and kokoro_pipeline is None:
         logger.warning("TTS: Kokoro requested but not loaded. Falling back to Piper.")
@@ -291,14 +301,78 @@ async def synthesize(text: str) -> bytes:
         return None
 
     audio_chunks = []
-    global_sr = 24000 if engine == "kokoro" else 22050
+    used_gpt_sovits = False
+    if engine == "gpt_sovits":
+        global_sr = 32000
+    elif engine == "kokoro":
+        global_sr = 24000
+    else:
+        global_sr = 22050
 
     try:
         for kind, content in segments:
             if not content: continue
             
             if kind == 'text':
-                if engine == "kokoro" and KPipeline is not None:
+                if engine == "gpt_sovits":
+                    import io
+                    payload = {
+                        "text": content,
+                        "text_lang": "en",
+                        "ref_audio_path": getattr(config, "REFER_WAV_PATH", ""),
+                        "prompt_text": getattr(config, "REFER_PROMPT_TEXT", ""),
+                        "prompt_lang": getattr(config, "REFER_PROMPT_LANG", "en")
+                    }
+                    target_url = f"http://127.0.0.1:{getattr(config, 'GPT_SOVITS_PORT', 9880)}/tts"
+                    success = False
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(target_url, json=payload, timeout=10.0) as resp:
+                                if resp.status == 200:
+                                    audio_bytes = await resp.read()
+                                    if sf is not None:
+                                        with io.BytesIO(audio_bytes) as bio:
+                                            data, sr = sf.read(bio)
+                                            audio_chunks.append(data)
+                                            success = True
+                                            used_gpt_sovits = True
+                                else:
+                                    err_t = await resp.text()
+                                    logger.error(f"GPT-SoVITS API error {resp.status}: {err_t}")
+                    except Exception as e:
+                        logger.error(f"GPT-SoVITS synthesis failed: {e}")
+                    
+                    if not success:
+                        logger.warning("GPT-SoVITS offline. Falling back to native TTS...")
+                        if kokoro_pipeline is not None:
+                            voice_id = getattr(config, "TTS_VOICE_KOKORO", "af_heart")
+                            generator = kokoro_pipeline(content, voice=voice_id, speed=1.0, split_pattern=r'\n+')
+                            for _, _, audio in generator:
+                                if audio is not None:
+                                    resampled = np.interp(np.linspace(0, len(audio), int(len(audio) * 32000 / 24000)), np.arange(len(audio)), audio)
+                                    audio_chunks.append(resampled)
+                        elif piper_voice is not None:
+                            temp_dir_batch = os.path.join(TEMP_DIR, f"batch_{uuid.uuid4().hex}")
+                            os.makedirs(temp_dir_batch, exist_ok=True)
+                            sub_sentences = re.split(r'(?<=[.!?])\s+', content)
+                            for i, sentence in enumerate(sub_sentences):
+                                sentence = sentence.strip()
+                                if not sentence: continue
+                                seg_path = os.path.join(temp_dir_batch, f"seg_{i}.wav")
+                                with wave.open(seg_path, "wb") as wav_file:
+                                    wav_file.setnchannels(1)
+                                    wav_file.setsampwidth(2)
+                                    wav_file.setframerate(22050)
+                                    syn_config = SynthesisConfig(length_scale=1.1, noise_scale=0.75, noise_w_scale=0.85)
+                                    piper_voice.synthesize_wav(sentence, wav_file, syn_config=syn_config)
+                                if sf is not None:
+                                    data, sr = sf.read(seg_path)
+                                    resampled = np.interp(np.linspace(0, len(data), int(len(data) * 32000 / 22050)), np.arange(len(data)), data)
+                                    audio_chunks.append(resampled)
+                                os.remove(seg_path)
+                            os.rmdir(temp_dir_batch)
+                
+                elif engine == "kokoro" and KPipeline is not None:
                     voice_id = getattr(config, "TTS_VOICE_KOKORO", "af_heart")
                     generator = kokoro_pipeline(content, voice=voice_id, speed=1.0, split_pattern=r'\n+')
                     for _, _, audio in generator:
@@ -334,16 +408,65 @@ async def synthesize(text: str) -> bytes:
 
             elif kind == 'tag':
                 if content == 'laugh':
-                    laugh_path = os.path.join(ASSETS_DIR, "human_laugh.wav")
-                    if sf is not None and os.path.exists(laugh_path):
-                        data, sr = sf.read(laugh_path)
-                        if sr != global_sr and len(data) > 0:
-                            data = np.interp(np.linspace(0, len(data), int(len(data) * global_sr / sr)), np.arange(len(data)), data)
-                        if data.ndim > 1: data = data.mean(axis=1) 
-                        audio_chunks.append(data)
+                    if engine == "gpt_sovits":
+                        import io
+                        payload = {
+                            "text": "hahaha...",
+                            "text_lang": "en",
+                            "ref_audio_path": getattr(config, "REFER_WAV_PATH", ""),
+                            "prompt_text": getattr(config, "REFER_PROMPT_TEXT", ""),
+                            "prompt_lang": getattr(config, "REFER_PROMPT_LANG", "en")
+                        }
+                        target_url = f"http://127.0.0.1:{getattr(config, 'GPT_SOVITS_PORT', 9880)}/tts"
+                        try:
+                            async with aiohttp.ClientSession() as session:
+                                async with session.post(target_url, json=payload, timeout=10.0) as resp:
+                                    if resp.status == 200:
+                                        audio_bytes = await resp.read()
+                                        if sf is not None:
+                                            with io.BytesIO(audio_bytes) as bio:
+                                                data, _ = sf.read(bio)
+                                                audio_chunks.append(data)
+                                                used_gpt_sovits = True
+                                    else:
+                                        logger.error(f"GPT-SoVITS laugh tag failed with status {resp.status}")
+                        except Exception as e:
+                            logger.error(f"GPT-SoVITS laugh tag synthesis failed: {e}")
+                    else:
+                        laugh_path = os.path.join(ASSETS_DIR, "human_laugh.wav")
+                        if sf is not None and os.path.exists(laugh_path):
+                            data, sr = sf.read(laugh_path)
+                            if sr != global_sr and len(data) > 0:
+                                data = np.interp(np.linspace(0, len(data), int(len(data) * global_sr / sr)), np.arange(len(data)), data)
+                            if data.ndim > 1: data = data.mean(axis=1) 
+                            audio_chunks.append(data)
                         
                 elif content in ['hmm', 'hum:up']:
-                    if engine == "kokoro" and KPipeline is not None:
+                    if engine == "gpt_sovits":
+                        import io
+                        payload = {
+                            "text": "mmm",
+                            "text_lang": "en",
+                            "ref_audio_path": getattr(config, "REFER_WAV_PATH", ""),
+                            "prompt_text": getattr(config, "REFER_PROMPT_TEXT", ""),
+                            "prompt_lang": getattr(config, "REFER_PROMPT_LANG", "en")
+                        }
+                        target_url = f"http://127.0.0.1:{getattr(config, 'GPT_SOVITS_PORT', 9880)}/tts"
+                        try:
+                            async with aiohttp.ClientSession() as session:
+                                async with session.post(target_url, json=payload, timeout=30.0) as resp:
+                                    if resp.status == 200:
+                                        audio_bytes = await resp.read()
+                                        if sf is not None:
+                                            with io.BytesIO(audio_bytes) as bio:
+                                                data, _ = sf.read(bio)
+                                                pattern = "thinking" if content == 'hmm' else "scale_up"
+                                                hummed = generate_musical_hum(data, global_sr, pattern)
+                                                audio_chunks.append(hummed)
+                                                used_gpt_sovits = True
+                        except Exception as e:
+                            logger.error(f"GPT-SoVITS humming failed: {e}")
+                    elif engine == "kokoro" and KPipeline is not None:
                         voice_id = getattr(config, "TTS_VOICE_KOKORO", "af_heart")
                         generator = kokoro_pipeline("mmm", voice=voice_id, speed=0.8)
                         pattern = "thinking" if content == 'hmm' else "scale_up"
@@ -372,12 +495,16 @@ async def synthesize(text: str) -> bytes:
 
         combined_mono_audio = np.concatenate(audio_chunks).astype(np.float32)
         
-        if sf is not None and Pedalboard is not None:
+        if sf is not None and Pedalboard is not None and not used_gpt_sovits:
             final_stereo_audio = apply_studio_mastering(combined_mono_audio, global_sr)
             sf.write(temp_combined_wav, final_stereo_audio.T, global_sr)
         else:
             if sf is not None:
-                sf.write(temp_combined_wav, combined_mono_audio, global_sr)
+                if combined_mono_audio.ndim == 1:
+                    stereo_audio = np.vstack((combined_mono_audio, combined_mono_audio))
+                else:
+                    stereo_audio = combined_mono_audio
+                sf.write(temp_combined_wav, stereo_audio.T, global_sr)
 
         if not os.path.exists(temp_combined_wav) or os.path.getsize(temp_combined_wav) == 0:
             logger.error("TTS: WAV file creation failed or file is empty before FFmpeg.")

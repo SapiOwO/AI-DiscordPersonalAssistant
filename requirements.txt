@@ -1,8 +1,11 @@
 discord.py
 python-dotenv
 asyncpg
+pynacl
+yt-dlp
 aiohttp
 httpx
+ollama
 numpy
 soundfile
 pedalboard
@@ -10,6 +13,7 @@ faster-whisper
 kokoro
 piper-tts
 pillow
+sentence-transformers
 
 # CUDA 12.1 Hardware Acceleration
 --extra-index-url https://download.pytorch.org/whl/cu121

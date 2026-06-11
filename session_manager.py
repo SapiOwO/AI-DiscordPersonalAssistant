@@ -61,16 +61,34 @@ def _build_recent_memory_block(
     channel_history: List[Dict],
     max_messages: int,
     max_chars_per_message: int,
+    max_chars_total: int = 1500,
 ) -> Optional[str]:
     if not channel_history:
         return None
 
     recent_messages = channel_history[-max_messages:]
     lines = []
-    for msg in recent_messages:
+    current_chars = 0
+    truncated = False
+
+    for msg in reversed(recent_messages):
         speaker = msg.get("username") or "User"
         content = _truncate_text(msg.get("content") or "", max_chars_per_message)
-        lines.append(f"{speaker}: {content}")
+        line = f"{speaker}: {content}"
+        
+        if current_chars + len(line) + 1 > max_chars_total:
+            truncated = True
+            break
+            
+        lines.append(line)
+        current_chars += len(line) + 1
+
+    if not lines:
+        return None
+
+    lines.reverse()
+    if truncated:
+        lines.insert(0, "...")
 
     return "Recent memory:\n" + "\n".join(lines)
 
@@ -178,6 +196,13 @@ def prepare_model_messages(
     max_search_results = int(limits.get("max_search_results_in_prompt", 3))
     max_search_snippet_chars = int(limits.get("max_search_snippet_chars", 280))
 
+    if prompt_mode == "lean":
+        max_chars_total = 1500
+    elif prompt_mode == "standard":
+        max_chars_total = 3500
+    else:
+        max_chars_total = 7000
+
     system_prompt = build_system_prompt(
         use_thinking=use_thinking,
         use_search=bool(search_results),
@@ -189,11 +214,12 @@ def prepare_model_messages(
 
     messages = [{"role": "system", "content": system_prompt}]
 
-    # Recent conversation history
+    # Recent conversation history with scrolling character budget limit
     recent_memory = _build_recent_memory_block(
         channel_history,
         max_messages=max_history_messages,
         max_chars_per_message=max_history_chars,
+        max_chars_total=max_chars_total,
     )
     if recent_memory:
         if prompt_mode == "lean":

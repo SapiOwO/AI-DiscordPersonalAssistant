@@ -1171,6 +1171,110 @@ async def on_guild_remove(guild):
             del afk_tracker[channel.id]
         purge_vision_cache_for_context(channel.id)
 
+voice_process = None
+log_pipe_task = None
+
+async def start_voice_engine():
+    global voice_process, log_pipe_task
+    engine_type = cfg("TTS_ENGINE", "kokoro").upper()
+    if engine_type not in ["GPT_SOVITS_CPU", "GPT_SOVITS_GPU"]:
+        return
+
+    import sys
+    root_dir = cfg("GPT_SOVITS_ROOT", "../AI-Vtuber")
+    
+    # Try local directory first, then fallback to configured sibling path
+    if engine_type == "GPT_SOVITS_CPU":
+        local_dir = os.path.abspath("./GPT-SoVITS-CPUFast")
+        sibling_dir = os.path.abspath(os.path.join(root_dir, "GPT-SoVITS-CPUFast"))
+        engine_dir = local_dir if os.path.exists(local_dir) else sibling_dir
+        
+        logger.info(f"Launching GPT-SoVITS-CPUFast Engine from: {engine_dir}")
+        if sys.platform == "win32":
+            python_exe = os.path.join(engine_dir, "venv-cpu", "Scripts", "python.exe")
+        else:
+            python_exe = os.path.join(engine_dir, "venv-cpu", "bin", "python")
+        script_py = os.path.join(engine_dir, "api_v2.py")
+    else:
+        local_dir = os.path.abspath("./GPT-SoVITS")
+        sibling_dir = os.path.abspath(os.path.join(root_dir, "GPT-SoVITS"))
+        engine_dir = local_dir if os.path.exists(local_dir) else sibling_dir
+        
+        logger.info(f"Launching GPT-SoVITS-GPU Engine from: {engine_dir}")
+        python_exe = sys.executable
+        script_py = os.path.join(engine_dir, "api_v2.py")
+
+    if not os.path.exists(python_exe):
+        logger.error(f"Voice Engine python executable missing: {python_exe}")
+        return
+
+    current_env = os.environ.copy()
+    current_env["locale"] = "en_US"
+    current_env["PYTHONIOENCODING"] = "utf-8"
+
+    try:
+        sovits_port = str(cfg("GPT_SOVITS_PORT", 9880))
+        voice_process = await asyncio.create_subprocess_exec(
+            python_exe, script_py, "--port", sovits_port,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=current_env,
+            cwd=engine_dir
+        )
+        log_pipe_task = asyncio.create_task(_stream_voice_logs())
+        logger.info("Voice Engine spawned. Warming up for 5 seconds...")
+        await asyncio.sleep(5)
+    except Exception as e:
+        logger.error(f"Failed to start Voice Engine: {e}")
+
+async def _stream_voice_logs():
+    if not voice_process:
+        return
+    try:
+        await asyncio.gather(
+            _read_stream(voice_process.stdout, "Voice-Engine"),
+            _read_stream(voice_process.stderr, "Voice-Engine-Error")
+        )
+    except asyncio.CancelledError:
+        pass
+
+async def _read_stream(stream, prefix):
+    while True:
+        line = await stream.readline()
+        if not line:
+            break
+        decoded_line = line.decode('utf-8', errors='ignore').strip()
+        if decoded_line:
+            if any(x in decoded_line for x in ["%|", "██████████", "it/s]", "False False False", "0/1", "1/1", "2/2", "3/3"]):
+                continue
+            if decoded_line.startswith("###") or decoded_line.startswith("---") or decoded_line.endswith("---"):
+                continue
+            if "Predict Semantic Token" in decoded_line or "Extract Text BERT Features" in decoded_line or "Synthesize Audio" in decoded_line:
+                continue
+            if "Parallel Inference Mode Enabled" in decoded_line or "When parallel inference mode" in decoded_line:
+                continue
+
+            metrics_match = re.match(r'^(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)$', decoded_line)
+            if metrics_match:
+                duration, prep, tokens, synthesis = map(float, metrics_match.groups())
+                total_latency = tokens + synthesis
+                decoded_line = f"Voice synthesized successfully! -> Latency: {total_latency:.2f}s | Audio Duration: {duration:.2f}s"
+
+            print(f"\033[36m[{prefix}]: {decoded_line}\033[0m")
+
+async def shutdown_voice_engine():
+    global voice_process, log_pipe_task
+    if log_pipe_task and not log_pipe_task.done():
+        log_pipe_task.cancel()
+    if voice_process:
+        logger.info("Shutting down background Voice Engine processes...")
+        try:
+            voice_process.terminate()
+            await voice_process.wait()
+        except Exception as e:
+            logger.error(f"Error terminating Voice Engine: {e}")
+        voice_process = None
+
 async def setup_hook():
     logger.info("Initializing database...")
     await db.init_db()
@@ -1178,6 +1282,9 @@ async def setup_hook():
     global dynamic_configs
     dynamic_configs = await db.get_all_dynamic_configs()
     logger.info(f"Loaded {len(dynamic_configs)} dynamic channel configurations.")
+
+    logger.info("Starting background voice engine if configured...")
+    await start_voice_engine()
 
     logger.info("Initializing native audio systems...")
     await audio_manager.init_models()
@@ -1211,6 +1318,12 @@ async def on_ready():
     bot.loop.create_task(on_bot_ready())
 
 bot.setup_hook = setup_hook
+
+original_close = bot.close
+async def close():
+    await shutdown_voice_engine()
+    await original_close()
+bot.close = close
 
 if __name__ == "__main__":
     if not cfg("DISCORD_TOKEN"):

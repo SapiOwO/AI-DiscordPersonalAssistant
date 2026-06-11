@@ -1,3 +1,4 @@
+from http import client
 import os
 import time
 import logging
@@ -107,7 +108,7 @@ async def chat_with_model(
     }
 
     async def _call():
-        return await client.chat(model=model, messages=messages, options=options)
+        return await client.chat(model=model, messages=messages, options=options, keep_alive="30m")
 
     try:
         if timeout_seconds is None or timeout_seconds <= 0:
