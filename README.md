@@ -90,6 +90,8 @@ The AI features local "ears" and a "voice," running entirely on your CPU/GPU to 
     ```
 
 ### 🔊 Optional: GPT-SoVITS Voice Cloning Setup
+Premium voice-cloning using **GPT-SoVITS** (both CPU and GPU versions) is **completely optional**. If you choose not to set it up, the bot will automatically fallback to native, local TTS engines (**Kokoro-82M** or **Piper**).
+
 If you want to enable premium voice-cloning with **GPT-SoVITS**:
 
 > [!NOTE]
