@@ -104,11 +104,12 @@ If you want to enable premium voice-cloning with **GPT-SoVITS**:
    * **Sibling Setup**: Or place it in a sibling directory (e.g., `../AI-Vtuber/GPT-SoVITS-CPUFast`).
 
 2. **Setup the Virtual Environment**:
-   * **CPU Mode (`GPT_SOVITS_CPU`)**: Create and install `venv-cpu` inside the CPU engine directory:
+   * **CPU Mode (`GPT_SOVITS_CPU`)**: Create and install `venv-cpu` inside the CPU engine directory. Since PyTorch is not included in the source CPUFast requirements, we install it manually:
      ```powershell
      cd GPT-SoVITS-CPUFast
      python -m venv venv-cpu
      .\venv-cpu\Scripts\Activate.ps1
+     pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
      pip install -r requirements.txt
      cd ..
      ```
