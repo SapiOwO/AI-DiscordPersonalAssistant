@@ -94,6 +94,17 @@ Premium voice-cloning using **GPT-SoVITS** (both CPU and GPU versions) is **comp
 
 If you want to enable premium voice-cloning with **GPT-SoVITS**:
 
+> [!IMPORTANT]
+> The GPT-SoVITS engine repositories are **not included** in this project repository. You must clone or download them manually into your project root folder structure as shown below:
+>
+> ```text
+> Discord-AI-Personal-Assistant/
+> ├── GPT-SoVITS/           # GPU-Accelerated Voice Engine (Clone/Download optionally)
+> ├── GPT-SoVITS-CPUFast/   # CPU-Optimized Voice Engine (Clone/Download optionally)
+> └── voice_ref/            # Place your character cloned reference voice wav files here
+>     └── your_ref_voice.wav
+> ```
+
 > [!NOTE]
 > **How the Environments Work:**
 > - **CPU Mode (`GPT_SOVITS_CPU`)**: If you're installing the CPUFast version, navigate to `./GPT-SoVITS-CPUFast`, create `venv-cpu` there, and install its requirements. It requires its own isolated space to avoid CUDA conflicts.
@@ -104,8 +115,9 @@ If you want to enable premium voice-cloning with **GPT-SoVITS**:
 > If you run the GPU version of GPT-SoVITS (especially V4 or newer) on Windows, you must ensure that **FFmpeg Shared Version** (the "full-shared" release containing `.dll` files like `avcodec.dll`) is installed and added to your system's environmental `PATH` variables. Otherwise, the PyTorch audio backend (`torchcodec`) will fail to initialize, throwing a DLL loading error.
 
 1. **Place the Engine Repository**:
-   * **Local Setup**: Place the engine folder directly into the bot's root folder as `./GPT-SoVITS-CPUFast` (CPU mode) or `./GPT-SoVITS` (GPU mode). *Note: These folders are ignored in `.gitignore`.*
+   * **Local Setup**: Place the engine folders directly into the bot's root folder as `./GPT-SoVITS-CPUFast` (CPU mode) or `./GPT-SoVITS` (GPU mode) matching the layout above. *Note: These folders are ignored in `.gitignore`.*
    * **External Setup**: Or place it in a sibling directory (e.g., `../GPT-SoVITS-CPUFast`) and update `GPT_SOVITS_ROOT` in `config.py` accordingly.
+
 
 2. **Setup the Virtual Environment**:
    * **CPU Mode (`GPT_SOVITS_CPU`)**: Create and install `venv-cpu` inside the CPU engine directory. Since PyTorch is not included in the source CPUFast requirements, we install it manually:

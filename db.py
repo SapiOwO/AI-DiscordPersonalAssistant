@@ -6,15 +6,16 @@ from typing import Optional, List, Dict, Any
 
 import asyncpg
 from dotenv import load_dotenv
+import config
 
 load_dotenv()
 logger = logging.getLogger("db")
 
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASS", "admin")
-DB_NAME = os.getenv("DB_NAME", "discord_ai")
+DB_HOST = config.DB_HOST
+DB_PORT = config.DB_PORT
+DB_USER = config.DB_USER
+DB_PASSWORD = config.DB_PASSWORD
+DB_NAME = config.DB_NAME
 
 db_pool: Optional[asyncpg.Pool] = None
 

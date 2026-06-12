@@ -10,23 +10,19 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("setup_db")
 
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASS", "admin")
-DB_NAME = os.getenv("DB_NAME", "discord_ai")
+import config
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 async def main():
     try:
-        logger.info(f"Connecting to PostgreSQL database: {DB_NAME}...")
+        logger.info(f"Connecting to PostgreSQL database: {config.DB_NAME}...")
         conn = await asyncpg.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME
+            host=config.DB_HOST,
+            port=config.DB_PORT,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
         )
         
         logger.info("Reading schema.sql...")

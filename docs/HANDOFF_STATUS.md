@@ -63,7 +63,7 @@ The bot is fully functional on the `dev` branch with the following capabilities:
 ## 5. Non-Negotiable Rules for the Next AI
 
 * **Never Split the Database**: Do not separate chat history database and vector memory storage. They must remain unified in the `messages` table on the same row.
-* **No Hardcoded Absolute Paths or Keys**: All configuration variables, paths, and API keys must be loaded via `config.py` or `.env`. No absolute local folder paths (e.g. `C:\Users\developer\...`) may be committed.
+* **No Hardcoded Absolute Paths or Keys**: All configuration variables, paths, and API keys must be loaded via `config.py` or `.env`. No absolute local folder paths (e.g. `C:\Users\username\...`) may be committed.
 * **Manage Temp Files**: All audio transformations in `temp_audio/` must occur in `try...finally` blocks to guarantee file unlinking.
 * **Ensure Local CPU/GPU Separation**: Keep embedding computations on the CPU (using `sentence-transformers` fallback or Ollama config) to prevent active LLM GPU starvation.
 * **Update documentation**: Always record your changes and plans in `docs/UPDATE.md` and keep this handoff status current.

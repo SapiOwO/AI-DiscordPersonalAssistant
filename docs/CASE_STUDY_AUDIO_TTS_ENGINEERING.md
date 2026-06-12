@@ -22,7 +22,7 @@ We established three main engineering objectives for this cross-project optimiza
 Forcing every user to install GPT-SoVITS to run a Discord bot is unacceptable. 
 
 ### Solution: Modular Plug-and-Play Fallback Architecture
-We decoupled the audio pipeline in [audio_manager.py](audio_manager.py):
+We decoupled the audio pipeline in [audio_manager.py](../audio_manager.py):
 1. **Optional Microservice Integration**: GPT-SoVITS is treated as an optional external microservice.
 2. **Dynamic Fallback Execution**: When the bot requests synthesis, the pipeline attempts to query the local GPT-SoVITS API. If it is offline, missing, or throws connection errors, the bot automatically catches the exception and redirects the text payload to local native TTS engines (**Kokoro-82M** or **Piper**).
 3. **Graceful Upgrades**: Users get a working audio assistant immediately and can opt-in to premium cloning whenever they choose.
@@ -76,7 +76,7 @@ else:
 ---
 
 ## 5. Zero-Configuration Hardware Acceleration (Auto-Device Detection)
-To remove user configuration errors, we replaced manual device selection (`TTS_DEVICE`) in [config.py](config.py) with dynamic hardware checking inside [audio_manager.py](audio_manager.py):
+To remove user configuration errors, we replaced manual device selection (`TTS_DEVICE`) in [config.py](../config.py) with dynamic hardware checking inside [audio_manager.py](../audio_manager.py):
 
 ```python
 has_cuda = False

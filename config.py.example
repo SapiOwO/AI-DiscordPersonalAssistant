@@ -3,84 +3,146 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Discord Bot Configuration ---
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"true", "1", "t", "yes", "y", "on"}
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _csv_int_list(name: str) -> list[int]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return []
+
+    values: list[int] = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            values.append(int(item))
+        except ValueError:
+            continue
+    return values
+
+
+# ==============================================================================
+# SENSITIVE CREDENTIALS (Loaded strictly from .env)
+# ==============================================================================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-OWNER_IDS = [int(x) for x in os.getenv("OWNER_IDS", "").split(",")] if os.getenv("OWNER_IDS") else []
-TARGET_CHANNEL_IDS = [int(x) for x in os.getenv("TARGET_CHANNEL_IDS", "").split(",")] if os.getenv("TARGET_CHANNEL_IDS") else []
-ALLOW_DMS = os.getenv("ALLOW_DMS", "False").lower() in ('true', '1', 't')
+OWNER_IDS = _csv_int_list("OWNER_IDS")
+TARGET_CHANNEL_IDS = _csv_int_list("TARGET_CHANNEL_IDS")
+ALLOW_DMS = _bool_env("ALLOW_DMS", False)
 
-# --- Database Secrets ---
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-DB_NAME = os.getenv("DB_NAME", "discord_ai")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASS")
+DB_NAME = os.getenv("DB_NAME")
 
-# --- API Keys ---
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:1b-it-qat")
+OLLAMA_TIMEOUT = _int_env("OLLAMA_TIMEOUT", 60)
+AI_RESPONSE_TIMEOUT = _int_env("AI_RESPONSE_TIMEOUT", OLLAMA_TIMEOUT)
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.4"))
+OLLAMA_TOP_K = _int_env("OLLAMA_TOP_K", 40)
+OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.9"))
+OLLAMA_NUM_CTX = _int_env("OLLAMA_NUM_CTX", 4096)
+EMBEDDING_ENGINE = os.getenv("EMBEDDING_ENGINE", "ollama").lower()
 
-# BOT CONFIGURATION
-# --- Ollama Settings ---
-OLLAMA_HOST = "http://localhost:11434"
-OLLAMA_MODEL = "gemma4:e4b-it-q4_K_M"
-OLLAMA_TIMEOUT = 120
-OLLAMA_TEMPERATURE = 0.7
-OLLAMA_TOP_K = 40
-OLLAMA_TOP_P = 0.9
-OLLAMA_NUM_CTX = 8192
+DEFAULT_PERSONA = os.getenv(
+    "DEFAULT_PERSONA",
+    """Role: A helpful AI personal assistant.
+Personality: Friendly, logical, and concise.
+Rules:
+* Answer user queries accurately and directly.
+* Keep responses brief and natural.
+""",
+)
 
-# --- Persona & Roles ---
-DEFAULT_PERSONA = "You are an elite, sarcastic, but helpful AI assistant. Keep responses concise and direct. Use varied sentence length."
 PERSONA_ALLOWED_ROLES = ["Admin", "Moderator"]
 
-# --- Chat Mechanics ---
-BURST_TYPING_MODE = True
-TRIGGER_WORDS = ["bot", "ai", "system"]
-MAX_DOCS_PER_QUERY = 8
+CHAT_HIDE_TTS_TAGS = _bool_env("CHAT_HIDE_TTS_TAGS", True)
+TTS_MODE_TAGS = [
+    "[laugh]",
+    "[sigh]",
+    "[hmm]",
+    "[hum:up]",
+    "[whisper]",
+    "[shout]",
+    "[scream]",
+    "[voice:normal]",
+    "[voice:whisper]",
+    "[voice:shout]",
+    "[voice:scream]",
+]
 
-# --- Voice & Text-to-Speech (TTS) ---
-TTS_ENGINE = "kokoro" # Options: 'kokoro' or 'piper'
-TTS_DEVICE = "cpu" # Options: 'cpu' or 'cuda'
-TTS_VOICE_PIPER = "en_US-hfc_female-medium" # Best voice: en_US-hfc_female-medium, en_US-libritts_r-medium, en_US-amy-medium. For more voices please follow this link https://rhasspy.github.io/piper-samples/
-TTS_VOICE_KOKORO = "af_heart" # Best voice: af_heart, af_bella, bf_emma. For more voices please follow this link https://github.com/hexgrad/kokoro
+BURST_TYPING_MODE = _bool_env("BURST_TYPING_MODE", True)
+TRIGGER_WORDS = [word.strip() for word in os.getenv("TRIGGER_WORDS", "bot,ai,system").split(",") if word.strip()]
+
+STATUS_MESSAGE = os.getenv("STATUS_MESSAGE", "I am not getting the ladder. You can stay up there until you learn how physics works.")
+STATUS_TYPE = os.getenv("STATUS_TYPE", "playing")
+SHOW_FOOTER_INFO_DEFAULT = _bool_env("SHOW_FOOTER_INFO_DEFAULT", False)
+
+AFK_MIN_MINUTES = _int_env("AFK_MIN_MINUTES", 15)
+AFK_MAX_MINUTES = _int_env("AFK_MAX_MINUTES", 60)
+AFK_FOLLOWUP_MIN_MINUTES = _int_env("AFK_FOLLOWUP_MIN_MINUTES", 20)
+AFK_FOLLOWUP_MAX_MINUTES = _int_env("AFK_FOLLOWUP_MAX_MINUTES", 180)
+SLEEP_AFK_MIN_HOURS = _int_env("SLEEP_AFK_MIN_HOURS", 7)
+SLEEP_AFK_MAX_HOURS = _int_env("SLEEP_AFK_MAX_HOURS", 9)
+
+MODEL_SUPPORTS_VISION = _bool_env("MODEL_SUPPORTS_VISION", True)
+MODEL_SUPPORTS_THINKING = _bool_env("MODEL_SUPPORTS_THINKING", False)
+MODEL_SUPPORTS_WEBSEARCH = _bool_env("MODEL_SUPPORTS_WEBSEARCH", True)
+MODEL_SUPPORTS_AUDIO = _bool_env("MODEL_SUPPORTS_AUDIO", True)
+OMNIPRESENT_MEMORY = _bool_env("OMNIPRESENT_MEMORY", False)
+
+STABLE_DIFFUSION_URL = os.getenv("STABLE_DIFFUSION_URL", "http://127.0.0.1:7860")
+IMAGINE_COOLDOWN_SECONDS = _int_env("IMAGINE_COOLDOWN_SECONDS", 60)
+IMAGE_MAX_DIMENSION = _int_env("IMAGE_MAX_DIMENSION", 1024)
+IMAGE_COMPRESSION_QUALITY = _int_env("IMAGE_COMPRESSION_QUALITY", 85)
+
+WEBSEARCH_TIMEOUT_SECONDS = _int_env("WEBSEARCH_TIMEOUT_SECONDS", 20)
+
+# ==============================================================================
+# ACTIVE SPEECH ENGINE SELECTOR
+# ==============================================================================
+TTS_ENGINE = "gpt_sovits_cpu"
+
+# ==============================================================================
+# GPT-SOVITS CONFIGURATION
+# ==============================================================================
+GPT_SOVITS_PORT = 9880
+GPT_SOVITS_ROOT = "./"
+REFER_WAV_PATH = "./voice_ref/your_ref_voice.wav"
+REFER_PROMPT_TEXT = "The exact transcription of the spoken reference clip."
+REFER_PROMPT_LANG = "en"
+GPT_SOVITS_GPU_IS_HALF = _bool_env("GPT_SOVITS_GPU_IS_HALF", True)
+
+# ==============================================================================
+# KOKORO & PIPER CONFIGURATIONS
+# ==============================================================================
+TTS_VOICE_KOKORO = "af_heart"
+TTS_VOICE_PIPER = "en_US-hfc_female-medium"
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
 
-# --- Status & Presence ---
-STATUS_MESSAGE = "your heart"
-STATUS_TYPE = "listening"
-SHOW_FOOTER_INFO_DEFAULT = False
-
-# --- Proactive / AFK Timers (Minutes) ---
-AFK_MIN_MINUTES = 15
-AFK_MAX_MINUTES = 60
-AFK_FOLLOWUP_MIN_MINUTES = 20
-AFK_FOLLOWUP_MAX_MINUTES = 180
-
-# --- Sleep Mechanics (Hours) ---
-SLEEP_AFK_MIN_HOURS = 7
-SLEEP_AFK_MAX_HOURS = 9
-
-# --- System Capabilities Toggle ---
-MODEL_SUPPORTS_VISION = True
-MODEL_SUPPORTS_THINKING = False
-MODEL_SUPPORTS_WEBSEARCH = True
-MODEL_SUPPORTS_AUDIO = True
-OMNIPRESENT_MEMORY = False
-
-# --- Visual Generation (Stable Diffusion) ---
-STABLE_DIFFUSION_URL = "http://127.0.0.1:7860"
-IMAGINE_COOLDOWN_SECONDS = 60
-IMAGE_MAX_DIMENSION = 1024
-IMAGE_COMPRESSION_QUALITY = 85
-
-# --- Constants & Templates ---
 RESPONSE_TEMPLATES = {
-    "error_generic": "An error occurred while processing your request.",
-    "error_timeout": "The request timed out. The AI took too long to respond.",
-    "error_download": "Failed to download the attachment.",
-    "audio_failed": "Failed to synthesize voice audio.",
-    "memory_wiped_channel": "Channel memory successfully erased.",
-    "memory_wiped_personal": "Your personal Direct Message memory has been completely erased."
+    "error_generic": "Error processing request.",
+    "error_timeout": "Request timed out.",
+    "error_download": "Failed to download attachment.",
+    "audio_failed": "Audio synthesis failed.",
+    "memory_wiped_channel": "Channel memory erased.",
+    "memory_wiped_personal": "Personal memory erased.",
 }

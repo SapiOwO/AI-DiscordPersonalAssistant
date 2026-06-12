@@ -12,7 +12,7 @@ You are an engineering partner helping maintain and optimize this Discord AI Per
 ## Strict Prohibitions
 
 * **No Memory Database Splitting**: Never revert the database back to separate MySQL + ChromaDB architectures. Do not separate vector storage from chat logging. Everything must reside in the unified PostgreSQL `messages` table with embeddings saved on the exact same row.
-* **No Hardcoded API Keys or Absolute Paths**: Do not write, commit, or print local filesystem paths (e.g. `C:\Users\developer\...`), actual Discord tokens, or PostgreSQL credentials in the code or documentation. Use relative paths and retrieve keys strictly through `config.py` or `.env`.
+* **No Hardcoded API Keys or Absolute Paths**: Do not write, commit, or print local filesystem paths (e.g. `C:\Users\username\...`), actual Discord tokens, or PostgreSQL credentials in the code or documentation. Use relative paths and retrieve keys strictly through `config.py` or `.env`.
 * **No Unmanaged Audio Leaks**: Never synthesize or transcode audio without using a clean `try...finally` block. All temporary file handles in `temp_audio/` must be explicitly closed and unlinked (deleted) to prevent running out of disk space on the host machine.
 * **No Unfiltered Prompts for Small Models**: Never bypass the `prompt_mode` parameter in `session_manager.py`. If you edit system prompt generation, verify that smaller models (under 4B parameters) continue to receive the extremely compact "Lean Mode" instructions.
 * **No Unapproved Core Libraries**: Do not install heavy AI or deep learning libraries (e.g., raw PyTorch, heavy audio frameworks) without explicit consent. Rely on the lightweight wrappers and the existing Ollama/Faster-Whisper/Kokoro local runtimes.
